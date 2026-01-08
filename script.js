@@ -185,6 +185,31 @@ function calculateDegree(rootNote, targetNote) {
 
     return degreeMap[diff] || '?';
 }
+/**
+ * 度数ラベルから音楽的な役割(クラス名)を判定する
+ * @param {string} degree - 度数 (例: "M3", "9", "11")
+ * @return {string} CSSクラス名部分 (role-chord, role-tension, role-avoid)
+ */
+function getDegreeRole(degree) {
+    // 1. 構成音 (Chord Tones)
+    // R(Root), 5(Fifth), M3/m3(Thirds), M7/m7(Sevenths)
+    const chordTones = ['R', '5', 'M3', 'm3', 'M7', 'm7'];
+    if (chordTones.includes(degree)) {
+        return 'role-chord';
+    }
+
+    // 2. アヴォイドノート (Avoid Notes)
+    // 今回のきらきら星(Major/Dominant)では、主に「11 (Perfect 4th)」がアヴォイド
+    // ※b9やb13も文脈によりますが、Cメジャーキーでは濁りやすいのでAvoid扱いでもOK
+    const avoidNotes = ['11', 'b9', 'b13'];
+    if (avoidNotes.includes(degree)) {
+        return 'role-avoid';
+    }
+
+    // 3. テンション (Tensions)
+    // 上記以外 (9, 13, #11 など)
+    return 'role-tension';
+}
 
 // ピアノロールの初期化
 function initPianoRoll() {
@@ -264,7 +289,13 @@ function handleGridClick(e, pitch, rowEl) {
 
     // 5. ブロック生成
     const block = document.createElement('div');
-    block.className = 'note-block note-mine';
+
+    // 役割判定
+    const roleClass = getDegreeRole(degreeLabel);
+
+    // クラス適用: note-mine(青背景) + roleClass(文字色と枠線)
+    block.className = `note-block note-mine ${roleClass}`;
+
     block.textContent = degreeLabel;
 
     // 1小節 = 25% の幅。

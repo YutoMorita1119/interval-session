@@ -145,6 +145,29 @@ body {
     z-index: 15;
 }
 
+/* 度数による役割の色分け (Role Coloring) */
+
+/* 1. 構成音 (Chord Tone): 安定 */
+/* 文字: 白, 枠: 白 */
+.role-chord {
+    color: #ffffff !important;
+    border-color: #ffffff !important;
+}
+
+/* 2. テンション (Available Tension): おしゃれ */
+/* 文字: 黄色, 枠: 黄色 */
+.role-tension {
+    color: #fde047 !important;
+    border-color: #fde047 !important;
+}
+
+/* 3. アヴォイド (Avoid Note): 濁る・注意 */
+.role-avoid {
+    color: #fca5a5 !important;
+    border-color: #fca5a5 !important;
+    opacity: 0.9;
+}
+
 /* プレイヤー別の色定義 */
 .note-mine {
     background-color: #3b82f6;
