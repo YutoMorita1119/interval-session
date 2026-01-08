@@ -276,6 +276,25 @@ function handleGridClick(e, pitch, rowEl) {
     const barIndex = Math.floor(x / barWidth); // 0 ~ 3
 
     if (barIndex < 0 || barIndex >= 4) return;
+    //「その小節内」の音数をカウントして制限する
+    const allBlocks = document.querySelectorAll('.note-block');
+    let notesInThisBar = 0;
+
+    allBlocks.forEach(block => {
+        // block.style.left ("25%"など) から小節番号を逆算
+        const leftVal = parseFloat(block.style.left);
+        const bIndex = Math.round(leftVal / 25);
+
+        if (bIndex === barIndex) {
+            notesInThisBar++;
+        }
+    });
+
+    // 8個以上ならブロック
+    if (notesInThisBar >= 8) {
+        alert(`この小節(Bar ${barIndex + 1})には、これ以上音を置けません(最大8音)。\n不要な音を右クリックで削除してください。`);
+        return;
+    }
 
     // 2. コード情報の取得
     const currentChord = SONG_STRUCTURE[barIndex];
@@ -311,21 +330,11 @@ function handleGridClick(e, pitch, rowEl) {
         ev.preventDefault();
         ev.stopPropagation();
         block.remove();
-        updateNoteCount(-1);
     });
 
     rowEl.appendChild(block);
-    updateNoteCount(1);
 
     console.log(`Placed ${pitch} in Bar ${barIndex + 1} (${currentChord.chordRoot}) -> ${degreeLabel}`);
-}
-
-// 音数表示の更新
-let currentNotes = 0;
-function updateNoteCount(diff) {
-    currentNotes += diff;
-    const display = document.getElementById('note-count-display');
-    if (display) display.textContent = currentNotes;
 }
 
 // 画面遷移などのモック
