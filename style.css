@@ -1,0 +1,187 @@
+@charset "UTF-8";
+
+/* =========================================
+   基本設定 & ユーティリティ
+   ========================================= */
+body {
+    font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', sans-serif;
+}
+
+/* カスタムスクロールバー (ピアノロール用) */
+.piano-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.piano-scroll::-webkit-scrollbar-track {
+    background: #f9fafb;
+    /* gray-50 */
+    border-left: 1px solid #e5e7eb;
+}
+
+.piano-scroll::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    /* gray-300 */
+    border-radius: 5px;
+    border: 2px solid #f9fafb;
+}
+
+.piano-scroll::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+    /* gray-400 */
+}
+
+/* ローダーアニメーション */
+.loader {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3b82f6;
+    /* blue-500 */
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* =========================================
+   ピアノロール (Piano Roll)
+   ========================================= */
+
+/* 鍵盤エリアのコンテナ */
+.keys-container {
+    position: sticky;
+    left: 0;
+    z-index: 20;
+    background-color: #ffffff;
+    border-right: 1px solid #e5e7eb;
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
+}
+
+/* 白鍵 */
+.key-white {
+    background-color: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+    color: #9ca3af;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 4px;
+    font-size: 10px;
+    height: 24px;
+    /* 音の高さの基準 */
+    box-sizing: border-box;
+}
+
+.key-white.has-label {
+    color: #3b82f6;
+    /* Cなどのラベルがある時は青く */
+    font-weight: bold;
+}
+
+/* 黒鍵 */
+.key-black {
+    background-color: #1f2937;
+    /* gray-800 */
+    border-bottom: 1px solid #374151;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 2px;
+    font-size: 9px;
+    height: 24px;
+    /* 白鍵と同じ高さで管理しやすくする */
+    box-sizing: border-box;
+}
+
+/* グリッドエリア */
+.grid-container {
+    background-color: #ffffff;
+    background-image:
+        linear-gradient(to right, #f3f4f6 1px, transparent 1px),
+        linear-gradient(to bottom, #f3f4f6 1px, transparent 1px);
+    background-size: 25% 24px;
+    /* 横:1拍ごと(4分割), 縦:キーの高さ */
+    position: relative;
+}
+
+/* オクターブ区切り線 (Cの下の線) */
+.octave-divider {
+    border-bottom: 2px solid #d1d5db;
+    /* gray-300 */
+}
+
+/* 配置されたノートブロック (Note Block) */
+.note-block {
+    position: absolute;
+    height: 22px;
+    top: 1px;
+    box-sizing: border-box;
+    border: 2px solid white;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: bold;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
+    transition: transform 0.1s;
+    user-select: none;
+    z-index: 10;
+}
+
+.note-block:hover {
+    transform: scale(1.05);
+    z-index: 15;
+}
+
+/* プレイヤー別の色定義 */
+.note-mine {
+    background-color: #3b82f6;
+    /* blue-500 */
+    border: 1px solid #2563eb;
+    color: white;
+}
+
+.note-opponent {
+    background-color: #ef4444;
+    /* red-500 */
+    border: 1px solid #dc2626;
+    color: white;
+    opacity: 0.8;
+}
+
+.note-shared {
+    background-color: #8b5cf6;
+    /* violet-500 */
+    border: 1px solid #7c3aed;
+    color: white;
+}
+
+/* 再生ヘッド */
+.playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #ef4444;
+    z-index: 30;
+    pointer-events: none;
+    transition: left 0.1s linear;
+}
+
+/* ロック画面のオーバーレイ */
+.turn-lock {
+    background-color: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(2px);
+}
