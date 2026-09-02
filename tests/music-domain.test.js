@@ -6,6 +6,7 @@ import {
   noteToFrequency,
   noteToMidi,
   placeNote,
+  removeParticipantNote,
 } from "../src/music-domain.js";
 
 test("音名をMIDI番号と周波数へ変換できる", () => {
@@ -15,20 +16,20 @@ test("音名をMIDI番号と周波数へ変換できる", () => {
   assert.ok(Math.abs(noteToFrequency("C4") - 261.625565) < 0.000001);
 });
 
-test("同じ拍と音程の重複を防ぎ，拍ごとの音数上限を守る", () => {
-  const first = placeNote([], { bar: 0, beat: 1, pitch: "C4" }, { maxNotesPerBeat: 2 });
+test("同じ和音と音程の重複を防ぎ，和音ごとの音数上限を守る", () => {
+  const first = placeNote([], { bar: 0, beat: 0, pitch: "C4" }, { maxNotesPerChord: 2 });
   assert.deepEqual(first, {
     outcome: "placed",
-    notes: [{ bar: 0, beat: 1, pitch: "C4" }],
+    notes: [{ bar: 0, beat: 0, pitch: "C4" }],
   });
 
-  const duplicate = placeNote(first.notes, { bar: 0, beat: 1, pitch: "C4" }, { maxNotesPerBeat: 2 });
+  const duplicate = placeNote(first.notes, { bar: 0, beat: 3, pitch: "C4" }, { maxNotesPerChord: 2 });
   assert.equal(duplicate.outcome, "duplicate");
   assert.equal(duplicate.notes.length, 1);
 
-  const second = placeNote(first.notes, { bar: 0, beat: 1, pitch: "E4" }, { maxNotesPerBeat: 2 });
-  const full = placeNote(second.notes, { bar: 0, beat: 1, pitch: "G4" }, { maxNotesPerBeat: 2 });
-  assert.equal(full.outcome, "beat-full");
+  const second = placeNote(first.notes, { bar: 0, beat: 2, pitch: "E4" }, { maxNotesPerChord: 2 });
+  const full = placeNote(second.notes, { bar: 0, beat: 0, pitch: "G4" }, { maxNotesPerChord: 2 });
+  assert.equal(full.outcome, "chord-full");
   assert.equal(full.notes.length, 2);
 });
 
@@ -43,6 +44,43 @@ test("基本伴奏は参加者が追加できる音数の上限に含めない",
 
   assert.equal(result.outcome, "placed");
   assert.equal(result.notes.length, 5);
+});
+
+test("各和音には参加者の音を8音まで置ける", () => {
+  const systemNote = { bar: 3, beat: 0, pitch: "C4", owner: "system" };
+  const pitches = ["C#4", "D4", "D#4", "E4", "F4", "F#4", "G4", "G#4"];
+  const eightNotes = pitches.reduce(
+    (notes, pitch) => placeNote(notes, { bar: 3, beat: 0, pitch, owner: "host" }).notes,
+    [systemNote],
+  );
+
+  assert.equal(eightNotes.length, 9);
+  assert.equal(
+    placeNote(eightNotes, { bar: 3, beat: 0, pitch: "A4", owner: "guest" }).outcome,
+    "chord-full",
+  );
+});
+
+test("参加者の音は所有者を問わず削除でき，基本和音は削除しない", () => {
+  const notes = [
+    { bar: 1, beat: 0, pitch: "F4", owner: "system" },
+    { bar: 1, beat: 0, pitch: "A4", owner: "host" },
+    { bar: 1, beat: 0, pitch: "C5", owner: "guest" },
+  ];
+
+  const withoutGuest = removeParticipantNote(notes, { bar: 1, pitch: "C5" });
+  assert.deepEqual(withoutGuest, {
+    outcome: "removed",
+    notes: notes.slice(0, 2),
+  });
+  assert.deepEqual(removeParticipantNote(withoutGuest.notes, { bar: 1, pitch: "A4" }), {
+    outcome: "removed",
+    notes: [notes[0]],
+  });
+  assert.deepEqual(removeParticipantNote(notes, { bar: 1, pitch: "F4" }), {
+    outcome: "system-note",
+    notes,
+  });
 });
 
 test("MajorとDominantのコード文脈に応じて度数の役割を分類できる", () => {

@@ -70,19 +70,36 @@ export function classifyNoteRole(rootNote, targetNote, context) {
   return { degree, role };
 }
 
-export function placeNote(notes, candidate, { maxNotesPerBeat = 4 } = {}) {
-  const allNotesInSlot = notes.filter(
-    (note) => note.bar === candidate.bar && note.beat === candidate.beat,
-  );
-  const participantNotesInSlot = allNotesInSlot.filter((note) => note.owner !== "system");
-  const isDuplicate = allNotesInSlot.some((note) => note.pitch === candidate.pitch);
+export function placeNote(notes, candidate, { maxNotesPerChord = 8 } = {}) {
+  const allNotesInChord = notes.filter((note) => note.bar === candidate.bar);
+  const participantNotesInChord = allNotesInChord.filter((note) => note.owner !== "system");
+  const isDuplicate = allNotesInChord.some((note) => note.pitch === candidate.pitch);
 
   if (isDuplicate) {
     return { outcome: "duplicate", notes: [...notes] };
   }
-  if (participantNotesInSlot.length >= maxNotesPerBeat) {
-    return { outcome: "beat-full", notes: [...notes] };
+  if (participantNotesInChord.length >= maxNotesPerChord) {
+    return { outcome: "chord-full", notes: [...notes] };
   }
 
   return { outcome: "placed", notes: [...notes, { ...candidate }] };
+}
+
+export function removeParticipantNote(notes, { bar, pitch }) {
+  const matchingNotes = notes.filter((note) => note.bar === bar && note.pitch === pitch);
+  const hasParticipantNote = matchingNotes.some((note) => note.owner !== "system");
+
+  if (hasParticipantNote) {
+    return {
+      outcome: "removed",
+      notes: notes.filter(
+        (note) => note.owner === "system" || note.bar !== bar || note.pitch !== pitch,
+      ),
+    };
+  }
+
+  return {
+    outcome: matchingNotes.some((note) => note.owner === "system") ? "system-note" : "not-found",
+    notes: [...notes],
+  };
 }

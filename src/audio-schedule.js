@@ -9,13 +9,17 @@ export function buildPlaybackSchedule({
   beatsPerBar = 4,
 }) {
   const secondsPerBeat = 60 / bpm;
-  const toEvent = (voice) => (note) => ({
-    voice,
-    pitch: note.pitch,
-    frequency: noteToFrequency(note.pitch),
-    startSeconds: (note.bar * beatsPerBar + note.beat) * secondsPerBeat,
-    durationSeconds: note.durationBeats * secondsPerBeat,
-  });
+  const toEvent = (voice) => (note) => {
+    const beat = note.beat ?? 0;
+    const durationBeats = note.durationBeats ?? (voice === "accompaniment" ? beatsPerBar : 1);
+    return {
+      voice,
+      pitch: note.pitch,
+      frequency: noteToFrequency(note.pitch),
+      startSeconds: (note.bar * beatsPerBar + beat) * secondsPerBeat,
+      durationSeconds: durationBeats * secondsPerBeat,
+    };
+  };
 
   return [
     ...melodyNotes.map(toEvent("melody")),

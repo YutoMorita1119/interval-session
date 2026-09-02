@@ -48,3 +48,18 @@ test("メロディと伴奏をBPMに基づく決定的な再生予定へ変換�
     },
   ]);
 });
+
+test("4和音の伴奏音を各和音の先頭から4拍分再生する", () => {
+  const schedule = buildPlaybackSchedule({
+    bpm: 120,
+    accompanimentNotes: [
+      { bar: 0, pitch: "C4" },
+      { bar: 3, pitch: "E4" },
+    ],
+  });
+
+  assert.deepEqual(schedule.map(({ startSeconds, durationSeconds }) => ({ startSeconds, durationSeconds })), [
+    { startSeconds: 0, durationSeconds: 2 },
+    { startSeconds: 6, durationSeconds: 2 },
+  ]);
+});
