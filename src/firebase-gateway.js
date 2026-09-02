@@ -73,13 +73,6 @@ export function createFirebaseGateway(firebaseConfig) {
     const user = requireUser(auth);
 
     return runTransaction(database, async (transaction) => {
-      const sessionRef = doc(database, sessionDocumentPath(sessionId));
-      const existing = await transaction.get(sessionRef);
-
-      if (existing.exists()) {
-        throw new Error('Session already exists');
-      }
-
       applyWrites(transaction, database, buildCreateSessionWrites({
         sessionId,
         hostUid: user.uid,

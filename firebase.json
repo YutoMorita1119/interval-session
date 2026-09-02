@@ -3,6 +3,7 @@
     "rules": "firestore.rules"
   },
   "hosting": {
+    "site": "musical-comms-app",
     "public": ".",
     "ignore": [
       "firebase.json",
