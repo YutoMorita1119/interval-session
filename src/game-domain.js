@@ -16,6 +16,21 @@ export function hasCurrentBoardSnapshot(session, committedTurnCount) {
   return committedTurnCount === requiredTurnCount;
 }
 
+export function getFinalGuessResult(reflections, opponentPrompt, finalTurnNumber) {
+  if (!Array.isArray(reflections)
+    || typeof opponentPrompt !== "string"
+    || opponentPrompt.trim() === ""
+    || !Number.isInteger(finalTurnNumber)) {
+    return null;
+  }
+
+  const finalReflection = reflections.find((reflection) => reflection?.turnNumber === finalTurnNumber);
+  const guess = finalReflection?.guess;
+  if (typeof guess === "string" && guess.trim() !== "") return { guess, isCorrect: guess === opponentPrompt };
+
+  return null;
+}
+
 export function createSession({ id, hostId, prompts, initialNotes = [] }) {
   return {
     id,

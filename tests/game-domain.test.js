@@ -4,10 +4,46 @@ import test from "node:test";
 import {
   commitTurn,
   createSession,
+  getFinalGuessResult,
   getSessionView,
   hasCurrentBoardSnapshot,
   joinSession,
 } from "../src/game-domain.js";
+
+test("役割ごとの最終担当ターンの予想を相手のお題と照合できる", () => {
+  assert.deepEqual(getFinalGuessResult([
+    { turnNumber: 1, guess: "" },
+    { turnNumber: 3, guess: "氷の結晶" },
+    { turnNumber: 5, guess: "" },
+    { turnNumber: 7, guess: "流星群" },
+  ], "流星群", 7), {
+    guess: "流星群",
+    isCorrect: true,
+  });
+
+  assert.deepEqual(getFinalGuessResult([
+    { turnNumber: 2, guess: "流星群" },
+    { turnNumber: 4, guess: "氷の結晶" },
+    { turnNumber: 6, guess: "樹齢を重ねた大木" },
+  ], "流星群", 6), {
+    guess: "樹齢を重ねた大木",
+    isCorrect: false,
+  });
+});
+
+test("最終担当ターンまたは相手のお題が未準備なら判定を返さない", () => {
+  assert.equal(getFinalGuessResult([], "流星群", 7), null);
+  assert.equal(getFinalGuessResult([{ turnNumber: 5, guess: "流星群" }], "流星群", 7), null);
+  assert.equal(getFinalGuessResult([{ turnNumber: 7, guess: "" }], "流星群", 7), null);
+  assert.equal(getFinalGuessResult([{ turnNumber: 7, guess: "流星群" }], null, 7), null);
+});
+
+test("最終予想と相手のお題は文字列を変換せず厳密一致で判定する", () => {
+  assert.deepEqual(
+    getFinalGuessResult([{ turnNumber: 7, guess: " 流星群 " }], "流星群", 7),
+    { guess: " 流星群 ", isCorrect: false },
+  );
+});
 
 test("現在の手番に対応する確定盤面が届くまで編集を待つ", () => {
   assert.equal(hasCurrentBoardSnapshot(null, 0), false);

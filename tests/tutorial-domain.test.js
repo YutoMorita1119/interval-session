@@ -4,50 +4,88 @@ import assert from "node:assert/strict";
 import {
   completeTutorial,
   createTutorialState,
-  markPlacementPracticed,
+  markBaseNoteRemoved,
+  markNoteAdded,
   markPlaybackPracticed,
-  markSubmissionPracticed,
   moveToNextStep,
+  reviewTutorialResult,
 } from "../src/tutorial-domain.js";
 
-test("参加方法を確認すると配置練習へ進む", () => {
+test("全体像から始まる新しいデモ状態を作成する", () => {
   const initial = createTutorialState();
 
   assert.deepEqual(initial, {
     step: 1,
-    placementPracticed: false,
+    baseNoteRemoved: false,
+    noteAdded: false,
     playbackPracticed: false,
-    submissionPracticed: false,
+    resultReviewed: false,
+    result: null,
     completed: false,
   });
+});
+
+test("全体像を確認すると音の編集練習へ進む", () => {
+  const initial = createTutorialState();
+
   assert.equal(moveToNextStep(initial).step, 2);
 });
 
-test("配置と再生の両方を試すまで記録説明へ進めない", () => {
+test("基本音削除・空きマス追加・再生のすべてを試すと結果確認へ進む", () => {
   const stepTwo = moveToNextStep(createTutorialState());
   assert.deepEqual(moveToNextStep(stepTwo), stepTwo);
 
-  const onlyPlaced = markPlacementPracticed(stepTwo);
-  assert.deepEqual(moveToNextStep(onlyPlaced), onlyPlaced);
+  const removed = markBaseNoteRemoved(stepTwo);
+  assert.deepEqual(moveToNextStep(removed), removed);
 
-  const practiced = markPlaybackPracticed(onlyPlaced);
+  const added = markNoteAdded(removed);
+  assert.deepEqual(moveToNextStep(added), added);
+
+  const practiced = markPlaybackPracticed(added);
   assert.equal(moveToNextStep(practiced).step, 3);
 });
 
-test("最後まで進むかスキップすると完了する", () => {
-  const initial = createTutorialState();
-  const finalStep = moveToNextStep(markPlaybackPracticed(markPlacementPracticed(
-    moveToNextStep(initial),
-  )));
+test("模擬履歴の最終予想と相手のお題が一致した結果を確認する", () => {
+  const stepTwo = moveToNextStep(createTutorialState());
+  const stepThree = moveToNextStep(markPlaybackPracticed(
+    markNoteAdded(markBaseNoteRemoved(stepTwo)),
+  ));
 
-  assert.equal(completeTutorial(finalStep).completed, true);
-  assert.equal(completeTutorial(initial).completed, true);
+  const reviewed = reviewTutorialResult(stepThree, {
+    guess: "お題B",
+    actualPrompt: "お題B",
+  });
+
+  assert.equal(reviewed.resultReviewed, true);
+  assert.deepEqual(reviewed.result, {
+    guess: "お題B",
+    actualPrompt: "お題B",
+    matches: true,
+  });
 });
 
-test("記録の模擬送信を完了として記録する", () => {
-  const initial = createTutorialState();
-  const submitted = markSubmissionPracticed(initial);
+test("結果を確認してからデモを完了し，再開始すると初期状態へ戻る", () => {
+  const stepTwo = moveToNextStep(createTutorialState());
+  const stepThree = moveToNextStep(markPlaybackPracticed(
+    markNoteAdded(markBaseNoteRemoved(stepTwo)),
+  ));
 
-  assert.equal(submitted.submissionPracticed, true);
-  assert.equal(submitted.completed, false);
+  assert.deepEqual(completeTutorial(stepThree), stepThree);
+
+  const reviewed = reviewTutorialResult(stepThree, {
+    guess: "お題B",
+    actualPrompt: "お題B",
+  });
+  const completed = completeTutorial(reviewed);
+  assert.equal(completed.completed, true);
+
+  assert.deepEqual(createTutorialState(), {
+    step: 1,
+    baseNoteRemoved: false,
+    noteAdded: false,
+    playbackPracticed: false,
+    resultReviewed: false,
+    result: null,
+    completed: false,
+  });
 });

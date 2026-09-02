@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="音で意図を伝え合う，2人用のターン制音楽コミュニケーション実験です．">
   <title>Interval Session</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
@@ -21,7 +21,11 @@
           <input id="session-id-input" maxlength="6" autocomplete="off" placeholder="ABC123">
           <button id="join-session-btn" class="button secondary" disabled>参加</button>
         </div>
-        <button id="open-tutorial-btn" class="tutorial-link" type="button">操作を確認する</button>
+        <section class="demo-entry" aria-labelledby="demo-entry-title">
+          <h2 id="demo-entry-title">一人で流れを確認する</h2>
+          <p>セッションデータを作成・保存せず，操作から結果までを約2分で確認できます．</p>
+          <button id="open-tutorial-btn" class="button secondary" type="button">操作と結果を見る</button>
+        </section>
       </div>
     </section>
     <section id="game-view" class="game-view" hidden>
@@ -50,28 +54,50 @@
   </main>
     <dialog id="history-dialog" class="modal"><div class="modal-header"><h2>ターン履歴</h2><button id="close-history-btn" class="icon-button">×</button></div><div id="history-list" class="history-list"></div></dialog>
     <dialog id="tutorial-dialog" class="modal tutorial-modal">
-      <div class="tutorial-top"><span id="tutorial-progress">1 / 3</span><button id="skip-tutorial-btn" class="text-button" type="button">スキップ</button></div>
+      <div class="tutorial-top"><span id="tutorial-progress">1 / 3</span><button id="skip-tutorial-btn" class="text-button" type="button">閉じる</button></div>
       <section id="tutorial-step-1" class="tutorial-step">
-        <h2>2人で参加する</h2>
-        <p>1人がセッションを作り，表示された6文字のIDを相手に伝えます．もう1人は同じIDを入力して参加します．</p>
-        <div class="room-diagram"><span>セッションを作る</span><strong>ABC123</strong><span>IDを入力して参加</span></div>
+        <h2>2人で音を伝え合う</h2>
+        <p>2人に別々のお題が本人だけへ示されます．共有する音を交互に編集し，相手のお題を予想します．</p>
+        <div class="demo-participants">
+          <div><strong>プレイヤーA</strong><span>本人だけに「お題A」</span></div>
+          <div class="session-link"><span>6文字のIDで参加</span><strong>ABC123</strong></div>
+          <div><strong>プレイヤーB</strong><span>本人だけに「お題B」</span></div>
+        </div>
+        <div class="turn-path" aria-label="7ターンを交互に進める"><span class="mine">1｜A</span><span class="other">2｜B</span><span class="mine">3｜A</span><span class="other">4｜B</span><span class="mine">5｜A</span><span class="other">6｜B</span><span class="mine">7｜A</span></div>
+        <ol class="demo-flow"><li>相手が残した音を聴き，解釈する</li><li>音を追加・削除して，自分の意図を表す</li><li>終了後に履歴とお題，最終予想を確認する</li></ol>
         <button id="tutorial-next-1" class="button primary">次へ</button>
       </section>
       <section id="tutorial-step-2" class="tutorial-step" hidden>
-        <h2>音を置いて聴く</h2>
-        <p>開始時には基本和音が灰色で置かれています．基本和音を含むマスを押すと音が消え，空いたマスを押すと自分の音を置けます．まず1つ操作してください．</p>
+        <h2>共有する音を編集する</h2>
+        <p>横の4列は4つの和音です．灰色は基本和音，赤は相手の音，青は自分が追加した音を表します．</p>
+        <div class="tutorial-legend"><span class="system">基本和音</span><span class="other">相手</span><span class="mine">あなた</span></div>
+        <ul class="tutorial-checklist" aria-label="操作項目">
+          <li id="tutorial-remove-check">○ 灰色の音を1つ消す</li>
+          <li id="tutorial-add-check">○ 空いたマスに1音置く</li>
+          <li id="tutorial-play-check">○ 配置した音を聴く</li>
+        </ul>
         <div id="tutorial-grid" class="tutorial-grid" aria-label="音の配置練習"></div>
         <button id="tutorial-play-btn" class="button secondary" type="button">▶ 配置した音を聴く</button>
         <button id="tutorial-next-2" class="button primary" disabled>次へ</button>
       </section>
       <section id="tutorial-step-3" class="tutorial-step" hidden>
-        <h2>記録して送る</h2>
-        <p>手番に応じて，解釈・意図・相手のお題の予想を記録します．記録はゲーム終了まで相手に表示されません．</p>
-        <div class="tutorial-form"><label for="tutorial-intention-input">今回，何を音で表しましたか？</label><textarea id="tutorial-intention-input" placeholder="例：高い音を加えた"></textarea><button id="tutorial-submit-btn" class="button primary" disabled>この音と記録を送る</button><p id="tutorial-submit-status" class="tutorial-status" hidden>操作確認が完了しました．この内容は保存されていません．</p></div>
-        <button id="finish-tutorial-btn" class="button primary" disabled>セッション選択へ</button>
+        <h2>履歴を振り返り，結果を確かめる</h2>
+        <p>各ターンでは解釈，意図，相手のお題の予想を記録します．終了後，音の変化と記録を双方へ開示します．</p>
+        <div class="tutorial-history-sample" aria-label="模擬ターン履歴">
+          <div><strong>TURN 1｜A</strong><span>音を編集し，意図を記録</span><i aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+          <div><strong>TURN 2｜B</strong><span>Aの音を解釈し，応答と予想を記録</span><i aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+          <div><strong>TURN 3｜A</strong><span>Bの応答を受けて，再び編集</span><i aria-hidden="true"><b></b><b></b><b></b><b></b></i></div>
+        </div>
+        <button id="tutorial-result-btn" class="button secondary" type="button">模擬結果を見る</button>
+        <div id="tutorial-result-preview" class="tutorial-result-preview" hidden aria-live="polite">
+          <div><span>あなたの最終予想</span><strong>お題B</strong></div>
+          <div><span>相手のお題</span><strong>お題B</strong></div>
+          <p>✓ 一致しました</p>
+        </div>
+        <div class="tutorial-final-actions"><button id="tutorial-restart-btn" class="button secondary" type="button" hidden>もう一度見る</button><button id="finish-tutorial-btn" class="button primary" disabled>セッション選択へ戻る</button></div>
       </section>
     </dialog>
-    <dialog id="result-dialog" class="modal result-modal"><h2>セッション結果</h2><p>双方のお題と記録を確認できます．</p><div id="result-prompts" class="result-prompts"></div><div class="result-actions"><button id="result-play-btn" class="button secondary">最後の音を聴く</button><button id="result-history-btn" class="button primary">記録を見る</button></div></dialog>
-  <script type="module" src="script.js?v=5"></script>
+    <dialog id="result-dialog" class="modal result-modal"><h2>セッション結果</h2><p>最終予想と相手のお題を確認できます．</p><div id="result-outcome" class="result-outcome" aria-live="polite"></div><div id="result-prompts" class="result-prompts"></div><div class="result-actions"><button id="result-play-btn" class="button secondary">最後の音を聴く</button><button id="result-history-btn" class="button secondary">記録を見る</button><button id="result-home-btn" class="button primary">最初の画面へ戻る</button></div></dialog>
+  <script type="module" src="script.js?v=6"></script>
 </body>
 </html>

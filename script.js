@@ -2,15 +2,16 @@ import { buildPlaybackSchedule } from "./src/audio-schedule.js";
 import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
 import { createFirebaseGateway } from "./src/firebase-gateway.js?v=4";
-import { hasCurrentBoardSnapshot, MAX_TURNS } from "./src/game-domain.js";
+import { getFinalGuessResult, hasCurrentBoardSnapshot, MAX_TURNS } from "./src/game-domain.js";
 import { classifyNoteRole, normalizeBoardNotes, noteToFrequency, placeNote, removeNote } from "./src/music-domain.js";
 import {
   completeTutorial,
   createTutorialState,
-  markPlacementPracticed,
+  markBaseNoteRemoved,
+  markNoteAdded,
   markPlaybackPracticed,
-  markSubmissionPracticed,
   moveToNextStep,
+  reviewTutorialResult,
 } from "./src/tutorial-domain.js";
 
 const BPM = 100;
@@ -39,11 +40,15 @@ const state = {
   uid: null, role: null, sessionId: null, session: null, privateData: null,
   turns: [], reflections: { host: [], guest: [] }, opponentPrivate: null,
   baseNotes: structuredClone(SYSTEM_NOTES), draftNotes: structuredClone(SYSTEM_NOTES),
-  unsubscribers: [], turnsLoaded: false, playing: false, playbackButton: null, revealed: false,
+  unsubscribers: [], sessionGeneration: 0, turnsLoaded: false, playing: false, playbackButton: null, revealed: false,
+  historyOpenedFromResult: false,
 };
 let tutorialState = createTutorialState();
-const tutorialNotes = new Set();
-const TUTORIAL_SYSTEM_NOTES = new Set(["G4:0", "A4:1", "G4:2", "G4:3"]);
+const tutorialNotes = new Map();
+const TUTORIAL_INITIAL_NOTES = [
+  ["G4:0", "system"], ["A4:1", "system"], ["G4:2", "system"], ["G4:3", "system"],
+  ["C5:2", "guest"],
+];
 let restoringSession = false;
 
 function sanitizeNotes(notes) {
@@ -63,14 +68,6 @@ function promptPair() {
   return [PROMPTS[first], PROMPTS[second]];
 }
 
-function tutorialWasSeen() {
-  try { return localStorage.getItem("interval-session:tutorial-seen") === "1"; }
-  catch { return false; }
-}
-function rememberTutorial() {
-  try { localStorage.setItem("interval-session:tutorial-seen", "1"); }
-  catch { /* Storage may be unavailable in a restricted browser. */ }
-}
 function rememberedSessionId() {
   try { return sessionStorage.getItem(ACTIVE_SESSION_KEY); }
   catch { return null; }
@@ -83,11 +80,34 @@ function forgetSession() {
   try { sessionStorage.removeItem(ACTIVE_SESSION_KEY); }
   catch { /* Session restoration is optional when storage is unavailable. */ }
 }
+function stopSessionListeners() {
+  state.sessionGeneration += 1;
+  for (const unsubscribe of state.unsubscribers.splice(0)) {
+    try { unsubscribe(); }
+    catch { /* A listener may already be closed. */ }
+  }
+}
+function forSessionGeneration(generation, listener) {
+  return (...args) => {
+    if (generation === state.sessionGeneration) listener(...args);
+  };
+}
 function renderTutorial() {
   for (let step = 1; step <= 3; step += 1) $(`tutorial-step-${step}`).hidden = tutorialState.step !== step;
   $("tutorial-progress").textContent = `${tutorialState.step} / 3`;
-  $("tutorial-next-2").disabled = !(tutorialState.placementPracticed && tutorialState.playbackPracticed);
-  $("finish-tutorial-btn").disabled = !tutorialState.submissionPracticed;
+  const checks = [
+    ["tutorial-remove-check", tutorialState.baseNoteRemoved],
+    ["tutorial-add-check", tutorialState.noteAdded],
+    ["tutorial-play-check", tutorialState.playbackPracticed],
+  ];
+  for (const [id, done] of checks) {
+    $(id).classList.toggle("done", done);
+    $(id).textContent = `${done ? "✓" : "○"} ${$(id).textContent.replace(/^[✓○]\s*/, "")}`;
+  }
+  $("tutorial-next-2").disabled = !(tutorialState.baseNoteRemoved && tutorialState.noteAdded && tutorialState.playbackPracticed);
+  $("tutorial-result-preview").hidden = !tutorialState.resultReviewed;
+  $("tutorial-restart-btn").hidden = !tutorialState.resultReviewed;
+  $("finish-tutorial-btn").disabled = !tutorialState.resultReviewed;
 }
 function buildTutorialGrid() {
   const grid = $("tutorial-grid"); grid.replaceChildren();
@@ -97,18 +117,21 @@ function buildTutorialGrid() {
     const label = document.createElement("span"); label.textContent = pitch; grid.append(label);
     for (let beat = 0; beat < 4; beat += 1) {
       const key = `${pitch}:${beat}`; const cell = document.createElement("button"); cell.type = "button";
-      cell.setAttribute("aria-label", `${beat + 1}番目の和音 ${pitch}`);
-      if (tutorialNotes.has(key)) cell.classList.add("system");
+      const owner = tutorialNotes.get(key);
+      cell.setAttribute("aria-label", `${beat + 1}番目の和音 ${pitch}${owner === "system" ? " 基本和音．押すと削除" : owner === "guest" ? " 相手の音．押すと削除" : owner === "host" ? " あなたの音．押すと削除" : " 音なし．押すと追加"}`);
+      if (owner === "system") cell.classList.add("system");
+      if (owner === "guest") cell.classList.add("other");
+      if (owner === "host") cell.classList.add("selected");
       cell.addEventListener("click", () => {
-        if (tutorialNotes.has(key)) {
+        const currentOwner = tutorialNotes.get(key);
+        if (currentOwner) {
           tutorialNotes.delete(key);
-          cell.classList.remove("system", "selected");
+          if (currentOwner === "system") tutorialState = markBaseNoteRemoved(tutorialState);
         } else {
-          tutorialNotes.add(key);
-          cell.classList.add("selected");
+          tutorialNotes.set(key, "host");
+          tutorialState = markNoteAdded(tutorialState);
         }
-        tutorialState = markPlacementPracticed(tutorialState);
-        renderTutorial();
+        buildTutorialGrid(); renderTutorial();
       });
       grid.append(cell);
     }
@@ -116,19 +139,23 @@ function buildTutorialGrid() {
 }
 function openTutorial() {
   tutorialState = createTutorialState(); tutorialNotes.clear();
-  TUTORIAL_SYSTEM_NOTES.forEach((note) => tutorialNotes.add(note));
+  TUTORIAL_INITIAL_NOTES.forEach(([key, owner]) => tutorialNotes.set(key, owner));
   buildTutorialGrid(); renderTutorial();
-  $("tutorial-intention-input").value = ""; $("tutorial-submit-btn").disabled = true; $("tutorial-submit-status").hidden = true;
   if (!$("tutorial-dialog").open) $("tutorial-dialog").showModal();
 }
+function closeTutorial() {
+  audio.stop(); tutorialState = createTutorialState(); tutorialNotes.clear();
+  if ($("tutorial-dialog").open) $("tutorial-dialog").close();
+}
 function finishTutorial() {
-  tutorialState = completeTutorial(tutorialState); rememberTutorial(); audio.stop(); $("tutorial-dialog").close();
+  tutorialState = completeTutorial(tutorialState);
+  if (tutorialState.completed) closeTutorial();
 }
 async function playTutorialNotes() {
   if (!tutorialNotes.size) { showToast("先にマスを押して音を置いてください．", true); return; }
-  const events = [...tutorialNotes].map((key) => {
+  const events = [...tutorialNotes].map(([key, owner]) => {
     const [pitch, beatText] = key.split(":");
-    return { voice: "host", frequency: noteToFrequency(pitch), startSeconds: Number(beatText) * .45, durationSeconds: .38 };
+    return { voice: owner, frequency: noteToFrequency(pitch), startSeconds: Number(beatText) * .55, durationSeconds: .48 };
   });
   tutorialState = markPlaybackPracticed(tutorialState); renderTutorial();
   await audio.play(events);
@@ -312,24 +339,32 @@ async function commitTurn() {
 }
 
 function enterSession({ sessionId, role, uid }) {
+  stopSessionListeners();
   state.sessionId = sessionId; state.role = role; state.uid = uid;
-  state.turnsLoaded = false;
+  state.session = null; state.privateData = null; state.opponentPrivate = null;
+  state.turns = []; state.reflections = { host: [], guest: [] };
+  state.baseNotes = structuredClone(SYSTEM_NOTES); state.draftNotes = structuredClone(SYSTEM_NOTES);
+  state.turnsLoaded = false; state.revealed = false; state.historyOpenedFromResult = false;
   rememberSession(sessionId);
   $("session-id-label").textContent = sessionId;
   $("lobby-view").hidden = true; $("game-view").hidden = false;
+  const generation = state.sessionGeneration;
+  const onError = forSessionGeneration(generation, (error) => showToast(friendlyError(error), true));
   state.unsubscribers.push(
-    gateway.listenSession(sessionId, (session) => {
+    gateway.listenSession(sessionId, forSessionGeneration(generation, (session) => {
       state.session = session;
       state.turnsLoaded = hasCurrentBoardSnapshot(state.session, state.turns.length);
       updateSessionUi(); renderHistory();
-    }, (error) => showToast(friendlyError(error), true)),
-    gateway.listenTurns(sessionId, (turns) => { state.turns = turns; applyLatestTurn(); }, (error) => showToast(friendlyError(error), true)),
-    gateway.listenPrivateData(sessionId, role, (data) => {
+    }), onError),
+    gateway.listenTurns(sessionId, forSessionGeneration(generation, (turns) => { state.turns = turns; applyLatestTurn(); }), onError),
+    gateway.listenPrivateData(sessionId, role, forSessionGeneration(generation, (data) => {
       state.privateData = data;
       if ($("theme-card").getAttribute("aria-expanded") === "true") $("theme-text").textContent = data?.prompt || "読み込み中…";
       if (state.revealed) renderResults();
-    }, (error) => showToast(friendlyError(error), true)),
-    gateway.listenReflections(sessionId, role, (items) => { state.reflections[role] = items; renderHistory(); }, (error) => showToast(friendlyError(error), true)),
+    }), onError),
+    gateway.listenReflections(sessionId, role, forSessionGeneration(generation, (items) => {
+      state.reflections[role] = items; renderHistory(); if (state.revealed) renderResults();
+    }), onError),
   );
 }
 async function createSession() {
@@ -420,13 +455,37 @@ function renderHistory() {
 function revealResults() {
   state.revealed = true;
   const otherRole = state.role === "host" ? "guest" : "host";
+  const generation = state.sessionGeneration;
+  const onError = forSessionGeneration(generation, (error) => showToast(friendlyError(error), true));
   state.unsubscribers.push(
-    gateway.listenPrivateData(state.sessionId, otherRole, (data) => { state.opponentPrivate = data; renderResults(); }, (error) => showToast(friendlyError(error), true)),
-    gateway.listenReflections(state.sessionId, otherRole, (items) => { state.reflections[otherRole] = items; renderHistory(); }, (error) => showToast(friendlyError(error), true)),
+    gateway.listenPrivateData(state.sessionId, otherRole, forSessionGeneration(generation, (data) => { state.opponentPrivate = data; renderResults(); }), onError),
+    gateway.listenReflections(state.sessionId, otherRole, forSessionGeneration(generation, (items) => {
+      state.reflections[otherRole] = items; renderHistory(); renderResults();
+    }), onError),
   );
   renderResults(); $("result-dialog").showModal();
 }
 function renderResults() {
+  const outcomeBox = $("result-outcome"); outcomeBox.replaceChildren();
+  const finalTurnNumber = state.role === "host" ? state.session?.maxTurns : state.session?.maxTurns - 1;
+  const finalGuess = getFinalGuessResult(state.reflections[state.role], state.opponentPrivate?.prompt, finalTurnNumber);
+  if (!finalGuess) {
+    outcomeBox.className = "result-outcome loading";
+    outcomeBox.textContent = "最終予想の判定を読み込んでいます．";
+  } else {
+    outcomeBox.className = "result-outcome";
+    const list = document.createElement("dl");
+    for (const [label, value] of [["あなたの最終予想", finalGuess.guess], ["相手のお題", state.opponentPrivate.prompt]]) {
+      const item = document.createElement("div");
+      const term = document.createElement("dt"); term.textContent = label;
+      const detail = document.createElement("dd"); detail.textContent = value;
+      item.append(term, detail); list.append(item);
+    }
+    const judgement = document.createElement("p");
+    judgement.className = `result-judgement ${finalGuess.isCorrect ? "correct" : "incorrect"}`;
+    judgement.textContent = finalGuess.isCorrect ? "✓ 最終予想は一致しました" : "× 最終予想は一致しませんでした";
+    outcomeBox.append(list, judgement);
+  }
   const box = $("result-prompts"); box.replaceChildren();
   const entries = [["あなたのお題", state.privateData?.prompt], ["相手のお題", state.opponentPrivate?.prompt]];
   for (const [label, value] of entries) {
@@ -435,6 +494,25 @@ function renderResults() {
     const prompt = document.createElement("strong"); prompt.textContent = value || "読み込み中…";
     card.append(caption, prompt); box.append(card);
   }
+}
+
+function returnToLobby() {
+  stopPlayback();
+  state.historyOpenedFromResult = false;
+  stopSessionListeners(); forgetSession();
+  for (const dialog of [$("history-dialog"), $("result-dialog")]) if (dialog.open) dialog.close();
+  state.sessionId = null; state.role = null; state.session = null; state.privateData = null; state.opponentPrivate = null;
+  state.turns = []; state.reflections = { host: [], guest: [] };
+  state.baseNotes = structuredClone(SYSTEM_NOTES); state.draftNotes = structuredClone(SYSTEM_NOTES);
+  state.turnsLoaded = false; state.revealed = false;
+  clearInputs();
+  $("theme-card").setAttribute("aria-expanded", "false"); $("theme-text").textContent = "クリックして表示";
+  $("session-id-label").textContent = "------"; $("session-id-input").value = "";
+  $("history-list").replaceChildren(); $("result-outcome").replaceChildren(); $("result-prompts").replaceChildren();
+  $("game-view").hidden = true; $("lobby-view").hidden = false;
+  $("auth-status").textContent = state.uid ? "接続済み" : "匿名接続を準備中";
+  $("create-session-btn").disabled = !state.uid; $("join-session-btn").disabled = !state.uid;
+  showToast("最初の画面へ戻りました．");
 }
 
 function bindUi() {
@@ -447,31 +525,34 @@ function bindUi() {
   $("copy-session-btn").addEventListener("click", async () => { await navigator.clipboard.writeText(state.sessionId); showToast("セッションIDをコピーしました．"); });
   for (const [inputId, countId] of [["interpretation-input","interpretation-count"],["intention-input","intention-count"]]) $(inputId).addEventListener("input", () => { $(countId).textContent = $(inputId).value.length; updateForm(); });
   $("guess-select").addEventListener("change", updateForm);
-  $("history-btn").addEventListener("click", () => { renderHistory(); $("history-dialog").showModal(); }); $("close-history-btn").addEventListener("click", () => { stopPlayback(); $("history-dialog").close(); });
-  $("history-dialog").addEventListener("close", stopPlayback);
-  $("result-history-btn").addEventListener("click", () => { $("result-dialog").close(); renderHistory(); $("history-dialog").showModal(); });
+  $("history-btn").addEventListener("click", () => { state.historyOpenedFromResult = false; renderHistory(); $("history-dialog").showModal(); });
+  $("close-history-btn").addEventListener("click", () => { stopPlayback(); $("history-dialog").close(); });
+  $("history-dialog").addEventListener("close", () => {
+    stopPlayback();
+    if (state.historyOpenedFromResult && state.session?.status === "completed") {
+      state.historyOpenedFromResult = false; renderResults(); $("result-dialog").showModal();
+    }
+  });
+  $("result-history-btn").addEventListener("click", () => { state.historyOpenedFromResult = true; $("result-dialog").close(); renderHistory(); $("history-dialog").showModal(); });
+  $("result-home-btn").addEventListener("click", returnToLobby);
+  $("result-dialog").addEventListener("cancel", (event) => event.preventDefault());
   $("open-tutorial-btn").addEventListener("click", openTutorial);
-  $("skip-tutorial-btn").addEventListener("click", finishTutorial);
+  $("skip-tutorial-btn").addEventListener("click", closeTutorial);
   $("finish-tutorial-btn").addEventListener("click", finishTutorial);
+  $("tutorial-restart-btn").addEventListener("click", openTutorial);
   $("tutorial-next-1").addEventListener("click", () => { tutorialState = moveToNextStep(tutorialState); renderTutorial(); });
   $("tutorial-next-2").addEventListener("click", () => { tutorialState = moveToNextStep(tutorialState); renderTutorial(); });
   $("tutorial-play-btn").addEventListener("click", () => playTutorialNotes().catch((error) => showToast(friendlyError(error), true)));
-  $("tutorial-intention-input").addEventListener("input", () => { $("tutorial-submit-btn").disabled = !$("tutorial-intention-input").value.trim(); });
-  $("tutorial-submit-btn").addEventListener("click", () => {
-    tutorialState = markSubmissionPracticed(tutorialState);
-    $("tutorial-submit-status").hidden = false;
-    $("tutorial-submit-btn").disabled = true;
-    renderTutorial();
-  });
+  $("tutorial-result-btn").addEventListener("click", () => { tutorialState = reviewTutorialResult(tutorialState, { guess: "お題B", actualPrompt: "お題B" }); renderTutorial(); });
+  $("tutorial-dialog").addEventListener("close", () => { audio.stop(); tutorialState = createTutorialState(); tutorialNotes.clear(); });
 }
 
 bindUi(); renderGrid();
-if (!tutorialWasSeen()) openTutorial();
 gateway.listenToAuthentication((user) => {
   state.uid = user?.uid ?? null;
   $("auth-dot").classList.toggle("online", Boolean(user));
   const sessionId = user && !state.sessionId && !restoringSession ? rememberedSessionId() : null;
-  $("auth-status").textContent = sessionId ? "セッションへ復帰中" : user ? "Firebaseへ匿名接続済み" : "匿名接続を準備中";
+  $("auth-status").textContent = sessionId ? "セッションへ復帰中" : user ? "接続済み" : "匿名接続を準備中";
   $("create-session-btn").disabled = !user || Boolean(sessionId);
   $("join-session-btn").disabled = !user || Boolean(sessionId);
   if (sessionId) {
@@ -482,7 +563,7 @@ gateway.listenToAuthentication((user) => {
       .finally(() => {
         restoringSession = false;
         if (!state.sessionId) {
-          $("auth-status").textContent = "Firebaseへ匿名接続済み";
+          $("auth-status").textContent = "接続済み";
           $("create-session-btn").disabled = false;
           $("join-session-btn").disabled = false;
         }
