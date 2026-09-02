@@ -4,11 +4,44 @@ import test from "node:test";
 import {
   commitTurn,
   createSession,
+  getBidirectionalFinalGuessResults,
   getFinalGuessResult,
+  getFinalTurnNumberForRole,
   getSessionView,
   hasCurrentBoardSnapshot,
   joinSession,
 } from "../src/game-domain.js";
+
+test("7ターン制の最終担当ターンを役割ごとに求める", () => {
+  assert.equal(getFinalTurnNumberForRole("host", 7), 7);
+  assert.equal(getFinalTurnNumberForRole("guest", 7), 6);
+  assert.equal(getFinalTurnNumberForRole("guest", 1), null);
+});
+
+test("双方の最終予想を互いのお題と交差して判定する", () => {
+  assert.deepEqual(getBidirectionalFinalGuessResults({
+    role: "host",
+    maxTurns: 7,
+    myPrompt: "氷の結晶",
+    opponentPrompt: "流星群",
+    myReflections: [{ turnNumber: 7, guess: "流星群" }],
+    opponentReflections: [{ turnNumber: 6, guess: "ガラスの破片" }],
+  }), {
+    mine: { guess: "流星群", isCorrect: true },
+    opponent: { guess: "ガラスの破片", isCorrect: false },
+  });
+});
+
+test("双方の最終予想が揃うまでは双方向の判定を返さない", () => {
+  assert.equal(getBidirectionalFinalGuessResults({
+    role: "guest",
+    maxTurns: 7,
+    myPrompt: "流星群",
+    opponentPrompt: "氷の結晶",
+    myReflections: [{ turnNumber: 6, guess: "氷の結晶" }],
+    opponentReflections: [{ turnNumber: 5, guess: "流星群" }],
+  }), null);
+});
 
 test("役割ごとの最終担当ターンの予想を相手のお題と照合できる", () => {
   assert.deepEqual(getFinalGuessResult([

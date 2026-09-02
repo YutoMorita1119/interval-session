@@ -31,6 +31,43 @@ export function getFinalGuessResult(reflections, opponentPrompt, finalTurnNumber
   return null;
 }
 
+export function getFinalTurnNumberForRole(role, maxTurns) {
+  if ((role !== "host" && role !== "guest")
+    || !Number.isInteger(maxTurns)
+    || maxTurns < 1) return null;
+
+  const roleUsesOddTurns = role === "host";
+  const finalTurnNumber = (maxTurns % 2 === 1) === roleUsesOddTurns
+    ? maxTurns
+    : maxTurns - 1;
+  return finalTurnNumber > 0 ? finalTurnNumber : null;
+}
+
+export function getBidirectionalFinalGuessResults({
+  role,
+  maxTurns,
+  myPrompt,
+  opponentPrompt,
+  myReflections,
+  opponentReflections,
+}) {
+  if (role !== "host" && role !== "guest") return null;
+
+  const opponentRole = role === "host" ? "guest" : "host";
+  const mine = getFinalGuessResult(
+    myReflections,
+    opponentPrompt,
+    getFinalTurnNumberForRole(role, maxTurns),
+  );
+  const opponent = getFinalGuessResult(
+    opponentReflections,
+    myPrompt,
+    getFinalTurnNumberForRole(opponentRole, maxTurns),
+  );
+
+  return mine && opponent ? { mine, opponent } : null;
+}
+
 export function createSession({ id, hostId, prompts, initialNotes = [] }) {
   return {
     id,

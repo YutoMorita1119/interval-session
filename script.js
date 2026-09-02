@@ -2,7 +2,7 @@ import { buildPlaybackSchedule } from "./src/audio-schedule.js";
 import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
 import { createFirebaseGateway } from "./src/firebase-gateway.js?v=4";
-import { getFinalGuessResult, hasCurrentBoardSnapshot, MAX_TURNS } from "./src/game-domain.js";
+import { getBidirectionalFinalGuessResults, hasCurrentBoardSnapshot, MAX_TURNS } from "./src/game-domain.js";
 import { classifyNoteRole, normalizeBoardNotes, noteToFrequency, placeNote, removeNote } from "./src/music-domain.js";
 import {
   completeTutorial,
@@ -465,35 +465,46 @@ function revealResults() {
   );
   renderResults(); $("result-dialog").showModal();
 }
+function createResultPrompt(label, value, className) {
+  const card = document.createElement("section"); card.className = `result-prompt ${className}`;
+  const caption = document.createElement("span"); caption.textContent = label;
+  const prompt = document.createElement("strong"); prompt.textContent = value;
+  card.append(caption, prompt); return card;
+}
+function createPredictionLane(label, mobileLabel, result, className) {
+  const lane = document.createElement("section"); lane.className = `prediction-lane ${className}`;
+  const direction = document.createElement("strong"); direction.className = "prediction-direction"; direction.textContent = label; direction.dataset.mobileLabel = mobileLabel;
+  const detail = document.createElement("span"); detail.className = "prediction-detail"; detail.textContent = `最終予想：${result.guess}`;
+  const judgement = document.createElement("span");
+  judgement.className = `prediction-judgement ${result.isCorrect ? "correct" : "incorrect"}`;
+  judgement.textContent = result.isCorrect ? "○ 一致" : "× 不一致";
+  lane.append(direction, detail, judgement); return lane;
+}
 function renderResults() {
-  const outcomeBox = $("result-outcome"); outcomeBox.replaceChildren();
-  const finalTurnNumber = state.role === "host" ? state.session?.maxTurns : state.session?.maxTurns - 1;
-  const finalGuess = getFinalGuessResult(state.reflections[state.role], state.opponentPrivate?.prompt, finalTurnNumber);
-  if (!finalGuess) {
-    outcomeBox.className = "result-outcome loading";
-    outcomeBox.textContent = "最終予想の判定を読み込んでいます．";
-  } else {
-    outcomeBox.className = "result-outcome";
-    const list = document.createElement("dl");
-    for (const [label, value] of [["あなたの最終予想", finalGuess.guess], ["相手のお題", state.opponentPrivate.prompt]]) {
-      const item = document.createElement("div");
-      const term = document.createElement("dt"); term.textContent = label;
-      const detail = document.createElement("dd"); detail.textContent = value;
-      item.append(term, detail); list.append(item);
-    }
-    const judgement = document.createElement("p");
-    judgement.className = `result-judgement ${finalGuess.isCorrect ? "correct" : "incorrect"}`;
-    judgement.textContent = finalGuess.isCorrect ? "✓ 最終予想は一致しました" : "× 最終予想は一致しませんでした";
-    outcomeBox.append(list, judgement);
+  const comparison = $("result-comparison"); comparison.replaceChildren();
+  const otherRole = state.role === "host" ? "guest" : "host";
+  const myPrompt = state.privateData?.prompt;
+  const otherPrompt = state.opponentPrivate?.prompt;
+  const results = getBidirectionalFinalGuessResults({
+    role: state.role,
+    maxTurns: state.session?.maxTurns,
+    myPrompt,
+    opponentPrompt: otherPrompt,
+    myReflections: state.reflections[state.role],
+    opponentReflections: state.reflections[otherRole],
+  });
+  if (!results) {
+    comparison.className = "result-comparison loading";
+    comparison.textContent = "双方の最終予想を読み込んでいます．";
+    return;
   }
-  const box = $("result-prompts"); box.replaceChildren();
-  const entries = [["あなたのお題", state.privateData?.prompt], ["相手のお題", state.opponentPrivate?.prompt]];
-  for (const [label, value] of entries) {
-    const card = document.createElement("div"); card.className = "result-prompt";
-    const caption = document.createElement("span"); caption.textContent = label;
-    const prompt = document.createElement("strong"); prompt.textContent = value || "読み込み中…";
-    card.append(caption, prompt); box.append(card);
-  }
+  comparison.className = "result-comparison ready";
+  comparison.append(
+    createResultPrompt("あなたのお題", myPrompt, "mine"),
+    createPredictionLane("あなた → 相手", "あなた ↓ 相手", results.mine, "toward-other"),
+    createPredictionLane("相手 → あなた", "相手 ↑ あなた", results.opponent, "toward-mine"),
+    createResultPrompt("相手のお題", otherPrompt, "other"),
+  );
 }
 
 function returnToLobby() {
@@ -508,7 +519,7 @@ function returnToLobby() {
   clearInputs();
   $("theme-card").setAttribute("aria-expanded", "false"); $("theme-text").textContent = "クリックして表示";
   $("session-id-label").textContent = "------"; $("session-id-input").value = "";
-  $("history-list").replaceChildren(); $("result-outcome").replaceChildren(); $("result-prompts").replaceChildren();
+  $("history-list").replaceChildren(); $("result-comparison").replaceChildren();
   $("game-view").hidden = true; $("lobby-view").hidden = false;
   $("auth-status").textContent = state.uid ? "接続済み" : "匿名接続を準備中";
   $("create-session-btn").disabled = !state.uid; $("join-session-btn").disabled = !state.uid;
