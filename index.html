@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="音で意図を伝え合う，2人用のターン制音楽コミュニケーション実験です．">
   <title>Interval Session</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
@@ -32,8 +32,8 @@
       </header>
       <div class="workspace">
         <section class="composer-panel" aria-label="音楽編集">
-          <div class="guide-strip"><p><strong>音を置く：</strong>マスをクリック　<strong>消す：</strong>置いた音をもう一度クリック</p><div class="legend"><span class="legend-system">◆ 基本和音</span><span class="legend-mine">● あなた</span><span class="legend-other">▲ 相手</span></div></div>
-          <div id="piano-roll" class="piano-roll" aria-label="4小節のピアノロール"></div>
+          <div class="guide-strip"><p><strong>音を置く：</strong>4つの和音からマスをクリック　<strong>消す：</strong>参加者が置いた音をもう一度クリック</p><div class="legend"><span class="legend-system">基本和音は列見出し</span><span class="legend-mine"><i></i>あなた</span><span class="legend-other"><i></i>相手</span></div></div>
+          <div id="piano-roll" class="piano-roll" aria-label="4和音のピアノロール"></div>
           <div id="turn-lock" class="turn-lock" hidden><div><span class="waiting-pulse"></span><strong id="lock-title">相手の応答を待っています</strong><p id="lock-detail">画面は自動で更新されます．</p></div></div>
           <div class="transport"><button id="preview-btn" class="button transport-button"><span id="preview-icon">▶</span><span><strong id="preview-label">全体を聴く</strong><small>4小節・約10秒</small></span></button><div class="progress-track"><span id="playhead"></span></div><span class="tempo">♩ = 100</span></div>
         </section>
@@ -59,7 +59,7 @@
       </section>
       <section id="tutorial-step-2" class="tutorial-step" hidden>
         <h2>音を置いて聴く</h2>
-        <p>マスを押すと音が置かれます．同じマスをもう一度押すと消えます．まず1つ置いてください．</p>
+        <p>4つの和音のいずれかでマスを押すと音が置かれます．同じマスをもう一度押すと消えます．まず1つ置いてください．</p>
         <div id="tutorial-grid" class="tutorial-grid" aria-label="音の配置練習"></div>
         <button id="tutorial-play-btn" class="button secondary" type="button">▶ 配置した音を聴く</button>
         <button id="tutorial-next-2" class="button primary" disabled>次へ</button>
@@ -72,6 +72,6 @@
       </section>
     </dialog>
     <dialog id="result-dialog" class="modal result-modal"><h2>セッション結果</h2><p>双方のお題と記録を確認できます．</p><div id="result-prompts" class="result-prompts"></div><div class="result-actions"><button id="result-play-btn" class="button secondary">最後の音を聴く</button><button id="result-history-btn" class="button primary">記録を見る</button></div></dialog>
-  <script type="module" src="script.js?v=3"></script>
+  <script type="module" src="script.js?v=4"></script>
 </body>
 </html>

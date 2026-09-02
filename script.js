@@ -3,7 +3,7 @@ import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
 import { createFirebaseGateway } from "./src/firebase-gateway.js?v=3";
 import { MAX_TURNS } from "./src/game-domain.js";
-import { classifyNoteRole, noteToFrequency, placeNote } from "./src/music-domain.js";
+import { classifyNoteRole, noteToFrequency, placeNote, removeParticipantNote } from "./src/music-domain.js";
 import {
   completeTutorial,
   createTutorialState,
@@ -14,12 +14,12 @@ import {
 } from "./src/tutorial-domain.js";
 
 const BPM = 100;
-const PROMPTS = ["流星群", "氷の結晶", "大樹", "ガラスの破片", "駆ける獣", "不思議な地下室"];
+const PROMPTS = ["流星群", "氷の結晶", "樹齢を重ねた大木", "ガラスの破片", "猛獣の暴走", "不気味な地下室"];
 const HARMONY = [
-  { root: "C3", context: "Major", label: "C" },
-  { root: "F3", context: "Major", label: "F" },
-  { root: "G3", context: "Dominant", label: "G7" },
-  { root: "C3", context: "Major", label: "C" },
+  { root: "C3", context: "Major", label: "C", tones: "C・E・G" },
+  { root: "F3", context: "Major", label: "F", tones: "F・A・C" },
+  { root: "G3", context: "Dominant", label: "G7", tones: "G・B・D・F" },
+  { root: "C3", context: "Major", label: "C", tones: "C・E・G" },
 ];
 const SYSTEM_NOTES = [
   ["C4", "E4", "G4"], ["F4", "A4", "C5"], ["G4", "B4", "D5", "F5"], ["C4", "E4", "G4"],
@@ -38,21 +38,23 @@ const state = {
   uid: null, role: null, sessionId: null, session: null, privateData: null,
   turns: [], reflections: { host: [], guest: [] }, opponentPrivate: null,
   baseNotes: structuredClone(SYSTEM_NOTES), draftNotes: structuredClone(SYSTEM_NOTES),
-  addedKeys: new Set(), unsubscribers: [], playing: false, revealed: false,
+  unsubscribers: [], playing: false, playbackButton: null, revealed: false,
 };
 let tutorialState = createTutorialState();
 const tutorialNotes = new Set();
 
-function noteKey(note) { return `${note.pitch}:${note.bar}:${note.beat}`; }
 function sanitizeNotes(notes) {
-  if (!Array.isArray(notes)) return structuredClone(SYSTEM_NOTES);
-  const allowedOwners = new Set(["system", "host", "guest"]);
-  return notes.filter((note) => note && typeof note.pitch === "string"
-    && /^[A-G]#?[3-6]$/.test(note.pitch)
-    && Number.isInteger(note.bar) && note.bar >= 0 && note.bar < 4
-    && Number.isInteger(note.beat) && note.beat >= 0 && note.beat < 4
-    && Number.isFinite(note.durationBeats) && note.durationBeats > 0 && note.durationBeats <= 4
-    && allowedOwners.has(note.owner)).slice(0, 128);
+  const participantNotes = [];
+  const validPitches = new Set(pitchesDescending());
+  for (const note of Array.isArray(notes) ? notes : []) {
+    if (!note || !validPitches.has(note.pitch) || !["host", "guest"].includes(note.owner)
+      || !Number.isInteger(note.bar) || note.bar < 0 || note.bar >= HARMONY.length) continue;
+    if (participantNotes.some((candidate) => candidate.bar === note.bar && candidate.pitch === note.pitch)) continue;
+    if (participantNotes.filter((candidate) => candidate.bar === note.bar).length >= 8) continue;
+    if (SYSTEM_NOTES.some((candidate) => candidate.bar === note.bar && candidate.pitch === note.pitch)) continue;
+    participantNotes.push({ ...note, beat: 0, durationBeats: 4 });
+  }
+  return [...structuredClone(SYSTEM_NOTES), ...participantNotes];
 }
 function sessionCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -82,12 +84,12 @@ function renderTutorial() {
 function buildTutorialGrid() {
   const grid = $("tutorial-grid"); grid.replaceChildren();
   const corner = document.createElement("span"); corner.textContent = ""; grid.append(corner);
-  for (let beat = 1; beat <= 4; beat += 1) { const head = document.createElement("span"); head.textContent = `${beat}拍`; grid.append(head); }
+  for (let chord = 0; chord < HARMONY.length; chord += 1) { const head = document.createElement("span"); head.textContent = `${chord + 1}｜${HARMONY[chord].label}`; grid.append(head); }
   for (const pitch of ["C5", "A4", "G4"]) {
     const label = document.createElement("span"); label.textContent = pitch; grid.append(label);
     for (let beat = 0; beat < 4; beat += 1) {
       const key = `${pitch}:${beat}`; const cell = document.createElement("button"); cell.type = "button";
-      cell.setAttribute("aria-label", `${pitch} ${beat + 1}拍`);
+      cell.setAttribute("aria-label", `${beat + 1}番目の和音 ${pitch}`);
       cell.addEventListener("click", () => {
         if (tutorialNotes.has(key)) tutorialNotes.delete(key); else tutorialNotes.add(key);
         tutorialState = markPlacementPracticed(tutorialState);
@@ -143,28 +145,28 @@ function renderGrid() {
   const grid = $("piano-roll");
   grid.replaceChildren();
   const corner = document.createElement("div"); corner.className = "corner"; grid.append(corner);
-  for (let slot = 0; slot < 16; slot += 1) {
+  for (let bar = 0; bar < HARMONY.length; bar += 1) {
     const head = document.createElement("div");
-    const bar = Math.floor(slot / 4); const beat = slot % 4;
-    head.className = `bar-head${beat === 3 ? " bar-end" : ""}`;
-    head.textContent = beat === 0 ? `${bar + 1}｜${HARMONY[bar].label}` : `${beat + 1}`;
+    head.className = "chord-head";
+    const label = document.createElement("strong"); label.textContent = `${bar + 1}｜${HARMONY[bar].label}`;
+    const tones = document.createElement("small"); tones.textContent = HARMONY[bar].tones;
+    head.append(label, tones);
     grid.append(head);
   }
-  const editable = canEdit();
+  const editable = canEditNotes();
   for (const pitch of pitchesDescending()) {
     const key = document.createElement("div");
     key.className = `key${pitch.includes("#") ? " black" : ""}`;
     key.textContent = pitch.startsWith("C") ? pitch : "";
     grid.append(key);
-    for (let slot = 0; slot < 16; slot += 1) {
-      const bar = Math.floor(slot / 4); const beat = slot % 4;
+    for (let bar = 0; bar < HARMONY.length; bar += 1) {
       const cell = document.createElement("button");
       cell.type = "button";
-      cell.className = `cell${pitch.includes("#") ? " black-row" : ""}${beat === 0 ? " beat-start" : ""}${beat === 3 ? " bar-end" : ""}`;
+      cell.className = `cell${pitch.includes("#") ? " black-row" : ""}`;
       cell.disabled = !editable;
-      cell.setAttribute("aria-label", `${bar + 1}小節 ${beat + 1}拍 ${pitch}`);
-      cell.addEventListener("click", () => toggleNote({ pitch, bar, beat }));
-      const notes = state.draftNotes.filter((note) => note.pitch === pitch && note.bar === bar && note.beat === beat);
+      cell.setAttribute("aria-label", `${bar + 1}番目の和音 ${pitch}`);
+      cell.addEventListener("click", () => toggleNote({ pitch, bar, beat: 0 }));
+      const notes = state.draftNotes.filter((note) => note.owner !== "system" && note.pitch === pitch && note.bar === bar);
       notes.forEach((note, index) => cell.append(renderNote(note, index, notes.length)));
       grid.append(cell);
     }
@@ -180,20 +182,20 @@ function renderNote(note, index, count) {
   mark.title = `${note.pitch}｜${harmonic.degree}`;
   return mark;
 }
-function canEdit() { return state.session?.status === "active" && state.session.currentPlayerUid === state.uid; }
+function isMyTurn() { return state.session?.status === "active" && state.session.currentPlayerUid === state.uid; }
+function canEditNotes() { return isMyTurn() && state.session.turnNumber < state.session.maxTurns; }
 function toggleNote(candidate) {
-  if (!canEdit()) return;
+  if (!canEditNotes()) return;
   if (state.playing) stopPlayback();
-  const key = noteKey(candidate);
-  if (state.addedKeys.has(key)) {
-    state.draftNotes = state.draftNotes.filter((note) => noteKey(note) !== key);
-    state.addedKeys.delete(key);
+  const participantNote = state.draftNotes.some((note) => note.owner !== "system"
+    && note.bar === candidate.bar && note.pitch === candidate.pitch);
+  if (participantNote) {
+    state.draftNotes = removeParticipantNote(state.draftNotes, candidate).notes;
   } else {
-    const placed = placeNote(state.draftNotes, { ...candidate, durationBeats: 1, owner: state.role });
-    if (placed.outcome === "beat-full") { showToast("1拍には4音まで置けます．", true); return; }
-    if (placed.outcome === "duplicate") { showToast("同じ場所にその音はすでにあります．", true); return; }
+    const placed = placeNote(state.draftNotes, { ...candidate, durationBeats: 4, owner: state.role });
+    if (placed.outcome === "chord-full") { showToast("1つの和音には8音まで置けます．", true); return; }
+    if (placed.outcome === "duplicate") { showToast("その音は基本和音に含まれています．", true); return; }
     state.draftNotes = placed.notes;
-    state.addedKeys.add(key);
     playSingle(candidate.pitch, state.role);
   }
   renderGrid();
@@ -206,9 +208,22 @@ function playbackEvents(notes = state.draftNotes) {
   const grouped = ["system", "host", "guest"].flatMap((owner) => buildPlaybackSchedule({ accompanimentNotes: notes.filter((note) => note.owner === owner), bpm: BPM }).map((event) => ({ ...event, voice: owner })));
   return [...melody, ...grouped].sort((a, b) => a.startSeconds - b.startSeconds);
 }
-async function togglePlayback(notes) {
-  if (state.playing) { stopPlayback(); return; }
-  state.playing = true; $("preview-icon").textContent = "■"; $("preview-label").textContent = "停止";
+function setPlaybackButton(button, playing) {
+  if (!button) return;
+  if (button.id === "preview-btn") {
+    $("preview-icon").textContent = playing ? "■" : "▶";
+    $("preview-label").textContent = playing ? "停止" : "全体を聴く";
+  } else {
+    button.textContent = playing ? "■ 停止" : button.dataset.playLabel;
+  }
+}
+async function togglePlayback(notes, button = $("preview-btn")) {
+  if (state.playing) {
+    const switchingSource = state.playbackButton !== button;
+    stopPlayback();
+    if (!switchingSource) return;
+  }
+  state.playing = true; state.playbackButton = button; setPlaybackButton(button, true);
   try {
     await audio.play(playbackEvents(notes), {
       onPlayhead: ({ progress }) => { $("playhead").style.width = `${progress * 100}%`; },
@@ -216,7 +231,10 @@ async function togglePlayback(notes) {
     });
   } catch (error) { stopPlayback(); showToast(friendlyError(error), true); }
 }
-function stopPlayback() { audio.stop(); state.playing = false; $("preview-icon").textContent = "▶"; $("preview-label").textContent = "全体を聴く"; $("playhead").style.width = "0"; }
+function stopPlayback() {
+  audio.stop(); setPlaybackButton(state.playbackButton, false); state.playing = false; state.playbackButton = null;
+  $("playhead").style.width = "0";
+}
 
 function updateForm() {
   const turn = state.session?.turnNumber ?? 1;
@@ -227,8 +245,8 @@ function updateForm() {
   const intention = $("intention-input").value.trim();
   const guess = $("guess-select").value;
   const valid = turn === 1 ? Boolean(intention) : turn === MAX_TURNS ? Boolean(interpretation && guess) : Boolean(interpretation && intention && guess);
-  $("commit-btn").disabled = !(canEdit() && valid);
-  $("requirement-text").textContent = !canEdit() ? "あなたの手番になると記録を送れます．" : valid ? "送信できます．確定後は編集できません．" : turn === 1 ? "今回の意図を入力してください．" : turn === MAX_TURNS ? "解釈と相手のお題の予想を入力してください．" : "解釈，意図，相手のお題の予想を入力してください．";
+  $("commit-btn").disabled = !(isMyTurn() && valid);
+  $("requirement-text").textContent = !isMyTurn() ? "あなたの手番になると記録を送れます．" : valid ? "送信できます．確定後は編集できません．" : turn === 1 ? "今回の意図を入力してください．" : turn === MAX_TURNS ? "最終ターンでは音を編集せず，解釈と相手のお題の予想を入力してください．" : "解釈，意図，相手のお題の予想を入力してください．";
 }
 function updateSessionUi() {
   if (!state.session) return;
@@ -236,7 +254,7 @@ function updateSessionUi() {
   $("max-turn").textContent = state.session.maxTurns;
   const waiting = state.session.status === "waiting";
   const completed = state.session.status === "completed";
-  const myTurn = canEdit();
+  const myTurn = isMyTurn();
   $("turn-badge").textContent = completed ? "完了" : waiting ? "参加待ち" : myTurn ? "あなたの手番" : "相手の手番";
   $("turn-lock").hidden = myTurn || completed;
   $("lock-title").textContent = waiting ? "もう一人の参加を待っています" : "相手の応答を待っています";
@@ -248,7 +266,6 @@ function applyLatestTurn() {
   const latest = state.turns.at(-1);
   state.baseNotes = sanitizeNotes(latest?.notes?.length ? latest.notes : SYSTEM_NOTES);
   state.draftNotes = structuredClone(state.baseNotes);
-  state.addedKeys.clear();
   renderGrid(); renderHistory();
 }
 
@@ -257,7 +274,7 @@ function clearInputs() {
   $("interpretation-count").textContent = "0"; $("intention-count").textContent = "0";
 }
 async function commitTurn() {
-  if (!canEdit()) return;
+  if (!isMyTurn()) return;
   $("commit-btn").disabled = true;
   try {
     await gateway.commitTurn({ sessionId: state.sessionId, notes: state.draftNotes, reflection: { interpretation: $("interpretation-input").value.trim(), intention: $("intention-input").value.trim(), guess: $("guess-select").value } });
@@ -270,7 +287,7 @@ function enterSession({ sessionId, role, uid }) {
   $("session-id-label").textContent = sessionId;
   $("lobby-view").hidden = true; $("game-view").hidden = false;
   state.unsubscribers.push(
-    gateway.listenSession(sessionId, (session) => { state.session = session; updateSessionUi(); }, (error) => showToast(friendlyError(error), true)),
+    gateway.listenSession(sessionId, (session) => { state.session = session; updateSessionUi(); renderHistory(); }, (error) => showToast(friendlyError(error), true)),
     gateway.listenTurns(sessionId, (turns) => { state.turns = turns; applyLatestTurn(); }, (error) => showToast(friendlyError(error), true)),
     gateway.listenPrivateData(sessionId, role, (data) => {
       state.privateData = data;
@@ -303,6 +320,29 @@ function textRow(label, text, secret = false) {
   if (secret) p.className = "history-secret";
   return p;
 }
+function createMiniPianoRoll(notes) {
+  const roll = document.createElement("div");
+  roll.className = "mini-piano-roll";
+  roll.setAttribute("role", "img");
+  roll.setAttribute("aria-label", "このターンで確定した4和音のピアノロール");
+  const pitchRows = pitchesDescending();
+  for (let bar = 0; bar < HARMONY.length; bar += 1) {
+    const chord = document.createElement("div"); chord.className = "mini-chord";
+    const label = document.createElement("span"); label.className = "mini-chord-label"; label.textContent = `${bar + 1}｜${HARMONY[bar].label}`;
+    chord.append(label);
+    for (const note of notes.filter((candidate) => candidate.owner !== "system" && candidate.bar === bar)) {
+      const pitchIndex = pitchRows.indexOf(note.pitch);
+      if (pitchIndex < 0) continue;
+      const mark = document.createElement("span");
+      mark.className = `mini-note ${note.owner === state.role ? "mini-note-mine" : "mini-note-other"}`;
+      mark.style.top = `calc(${(pitchIndex / (pitchRows.length - 1)) * 100}% - 3px)`;
+      mark.title = note.pitch;
+      chord.append(mark);
+    }
+    roll.append(chord);
+  }
+  return roll;
+}
 function renderHistory() {
   const list = $("history-list"); list.replaceChildren();
   if (!state.turns.length) { list.append(textRow("履歴", "まだ確定されたターンはありません．")); return; }
@@ -313,6 +353,12 @@ function renderHistory() {
     const item = document.createElement("article"); item.className = "history-item";
     const header = document.createElement("header"); const title = document.createElement("strong"); title.textContent = `TURN ${turn.number}`;
     const author = document.createElement("span"); author.textContent = mine ? "あなた" : "相手"; header.append(title, author); item.append(header);
+    const turnNotes = sanitizeNotes(turn.notes);
+    const board = document.createElement("div"); board.className = "history-board";
+    const playButton = document.createElement("button"); playButton.type = "button"; playButton.className = "button secondary history-play-button"; playButton.textContent = "▶ このターンを聴く";
+    playButton.dataset.playLabel = "▶ このターンを聴く";
+    playButton.addEventListener("click", () => togglePlayback(turnNotes, playButton));
+    board.append(createMiniPianoRoll(turnNotes), playButton); item.append(board);
     if (reflection) {
       item.append(textRow("解釈", reflection.interpretation), textRow("意図", reflection.intention), textRow("予想", reflection.guess));
     } else {
@@ -345,12 +391,14 @@ function bindUi() {
   for (const prompt of PROMPTS) { const option = document.createElement("option"); option.value = prompt; option.textContent = prompt; $("guess-select").append(option); }
   $("session-id-input").addEventListener("input", (event) => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, "").slice(0, 6); });
   $("create-session-btn").addEventListener("click", createSession); $("join-session-btn").addEventListener("click", joinSession); $("commit-btn").addEventListener("click", commitTurn);
-  $("preview-btn").addEventListener("click", () => togglePlayback()); $("result-play-btn").addEventListener("click", () => togglePlayback(state.baseNotes));
+  $("result-play-btn").dataset.playLabel = "最後の音を聴く";
+  $("preview-btn").addEventListener("click", () => togglePlayback()); $("result-play-btn").addEventListener("click", () => togglePlayback(state.baseNotes, $("result-play-btn")));
   $("theme-card").addEventListener("click", () => { const open = $("theme-card").getAttribute("aria-expanded") !== "true"; $("theme-card").setAttribute("aria-expanded", String(open)); $("theme-text").textContent = open ? state.privateData?.prompt || "読み込み中…" : "クリックして表示"; });
   $("copy-session-btn").addEventListener("click", async () => { await navigator.clipboard.writeText(state.sessionId); showToast("セッションIDをコピーしました．"); });
   for (const [inputId, countId] of [["interpretation-input","interpretation-count"],["intention-input","intention-count"]]) $(inputId).addEventListener("input", () => { $(countId).textContent = $(inputId).value.length; updateForm(); });
   $("guess-select").addEventListener("change", updateForm);
-  $("history-btn").addEventListener("click", () => { renderHistory(); $("history-dialog").showModal(); }); $("close-history-btn").addEventListener("click", () => $("history-dialog").close());
+  $("history-btn").addEventListener("click", () => { renderHistory(); $("history-dialog").showModal(); }); $("close-history-btn").addEventListener("click", () => { stopPlayback(); $("history-dialog").close(); });
+  $("history-dialog").addEventListener("close", stopPlayback);
   $("result-history-btn").addEventListener("click", () => { $("result-dialog").close(); renderHistory(); $("history-dialog").showModal(); });
   $("open-tutorial-btn").addEventListener("click", openTutorial);
   $("skip-tutorial-btn").addEventListener("click", finishTutorial);
