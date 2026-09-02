@@ -72,34 +72,58 @@ export function classifyNoteRole(rootNote, targetNote, context) {
 
 export function placeNote(notes, candidate, { maxNotesPerChord = 8 } = {}) {
   const allNotesInChord = notes.filter((note) => note.bar === candidate.bar);
-  const participantNotesInChord = allNotesInChord.filter((note) => note.owner !== "system");
   const isDuplicate = allNotesInChord.some((note) => note.pitch === candidate.pitch);
 
   if (isDuplicate) {
     return { outcome: "duplicate", notes: [...notes] };
   }
-  if (participantNotesInChord.length >= maxNotesPerChord) {
+  if (allNotesInChord.length >= maxNotesPerChord) {
     return { outcome: "chord-full", notes: [...notes] };
   }
 
   return { outcome: "placed", notes: [...notes, { ...candidate }] };
 }
 
-export function removeParticipantNote(notes, { bar, pitch }) {
+export function removeNote(notes, { bar, pitch }) {
   const matchingNotes = notes.filter((note) => note.bar === bar && note.pitch === pitch);
-  const hasParticipantNote = matchingNotes.some((note) => note.owner !== "system");
 
-  if (hasParticipantNote) {
+  if (matchingNotes.length) {
     return {
       outcome: "removed",
       notes: notes.filter(
-        (note) => note.owner === "system" || note.bar !== bar || note.pitch !== pitch,
+        (note) => note.bar !== bar || note.pitch !== pitch,
       ),
     };
   }
 
   return {
-    outcome: matchingNotes.some((note) => note.owner === "system") ? "system-note" : "not-found",
+    outcome: "not-found",
     notes: [...notes],
   };
+}
+
+export function normalizeBoardNotes(notes, {
+  validPitches,
+  chordCount,
+  maxNotesPerChord = 8,
+}) {
+  const allowedPitches = new Set(validPitches);
+  let normalizedNotes = [];
+
+  for (const note of Array.isArray(notes) ? notes : []) {
+    if (!note || !allowedPitches.has(note.pitch)
+      || !["system", "host", "guest"].includes(note.owner)
+      || !Number.isInteger(note.bar) || note.bar < 0 || note.bar >= chordCount) continue;
+
+    const placed = placeNote(normalizedNotes, {
+      pitch: note.pitch,
+      bar: note.bar,
+      beat: 0,
+      durationBeats: 4,
+      owner: note.owner,
+    }, { maxNotesPerChord });
+    normalizedNotes = placed.notes;
+  }
+
+  return normalizedNotes;
 }

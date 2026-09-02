@@ -3,7 +3,7 @@ import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
 import { createFirebaseGateway } from "./src/firebase-gateway.js?v=3";
 import { MAX_TURNS } from "./src/game-domain.js";
-import { classifyNoteRole, noteToFrequency, placeNote, removeParticipantNote } from "./src/music-domain.js";
+import { classifyNoteRole, normalizeBoardNotes, noteToFrequency, placeNote, removeNote } from "./src/music-domain.js";
 import {
   completeTutorial,
   createTutorialState,
@@ -42,17 +42,13 @@ const state = {
 };
 let tutorialState = createTutorialState();
 const tutorialNotes = new Set();
+const TUTORIAL_SYSTEM_NOTES = new Set(["G4:0", "A4:1", "G4:2", "G4:3"]);
 
 function sanitizeNotes(notes) {
-  let normalizedNotes = structuredClone(SYSTEM_NOTES);
-  const validPitches = new Set(pitchesDescending());
-  for (const note of Array.isArray(notes) ? notes : []) {
-    if (!note || !validPitches.has(note.pitch) || !["host", "guest"].includes(note.owner)
-      || !Number.isInteger(note.bar) || note.bar < 0 || note.bar >= HARMONY.length) continue;
-    const placed = placeNote(normalizedNotes, { ...note, beat: 0, durationBeats: 4 });
-    normalizedNotes = placed.notes;
-  }
-  return normalizedNotes;
+  return normalizeBoardNotes(notes, {
+    validPitches: pitchesDescending(),
+    chordCount: HARMONY.length,
+  });
 }
 function sessionCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -88,10 +84,16 @@ function buildTutorialGrid() {
     for (let beat = 0; beat < 4; beat += 1) {
       const key = `${pitch}:${beat}`; const cell = document.createElement("button"); cell.type = "button";
       cell.setAttribute("aria-label", `${beat + 1}番目の和音 ${pitch}`);
+      if (tutorialNotes.has(key)) cell.classList.add("system");
       cell.addEventListener("click", () => {
-        if (tutorialNotes.has(key)) tutorialNotes.delete(key); else tutorialNotes.add(key);
+        if (tutorialNotes.has(key)) {
+          tutorialNotes.delete(key);
+          cell.classList.remove("system", "selected");
+        } else {
+          tutorialNotes.add(key);
+          cell.classList.add("selected");
+        }
         tutorialState = markPlacementPracticed(tutorialState);
-        cell.classList.toggle("selected", tutorialNotes.has(key));
         renderTutorial();
       });
       grid.append(cell);
@@ -99,7 +101,9 @@ function buildTutorialGrid() {
   }
 }
 function openTutorial() {
-  tutorialState = createTutorialState(); tutorialNotes.clear(); buildTutorialGrid(); renderTutorial();
+  tutorialState = createTutorialState(); tutorialNotes.clear();
+  TUTORIAL_SYSTEM_NOTES.forEach((note) => tutorialNotes.add(note));
+  buildTutorialGrid(); renderTutorial();
   $("tutorial-intention-input").value = ""; $("tutorial-submit-btn").disabled = true; $("tutorial-submit-status").hidden = true;
   if (!$("tutorial-dialog").open) $("tutorial-dialog").showModal();
 }
@@ -164,7 +168,11 @@ function renderGrid() {
       cell.disabled = !editable;
       cell.setAttribute("aria-label", `${bar + 1}番目の和音 ${pitch}`);
       cell.addEventListener("click", () => toggleNote({ pitch, bar, beat: 0 }));
-      const notes = state.draftNotes.filter((note) => note.owner !== "system" && note.pitch === pitch && note.bar === bar);
+      const notes = state.draftNotes.filter((note) => note.pitch === pitch && note.bar === bar);
+      if (notes.length) {
+        const description = notes.map((note) => noteDescription(note)).join("，");
+        cell.setAttribute("aria-label", `${bar + 1}番目の和音 ${description}．押すと削除`);
+      }
       notes.forEach((note, index) => cell.append(renderNote(note, index, notes.length)));
       grid.append(cell);
     }
@@ -177,22 +185,30 @@ function renderNote(note, index, count) {
   mark.className = `note-mark note-${ownership} role-${harmonic.role}`;
   mark.textContent = harmonic.degree;
   if (count > 1) { mark.style.inset = `${2 + index * 2}px ${2 + (count - index - 1) * 2}px`; }
-  mark.title = `${note.pitch}｜${harmonic.degree}`;
+  mark.title = noteDescription(note);
+  mark.setAttribute("aria-label", noteDescription(note));
   return mark;
+}
+function ownerLabel(owner) {
+  if (owner === "system") return "基本和音";
+  return owner === state.role ? "あなた" : "相手";
+}
+function noteDescription(note) {
+  const harmonic = classifyNoteRole(HARMONY[note.bar].root, note.pitch, HARMONY[note.bar].context);
+  return `${note.pitch}｜${harmonic.degree}｜${ownerLabel(note.owner)}`;
 }
 function isMyTurn() { return state.session?.status === "active" && state.session.currentPlayerUid === state.uid; }
 function canEditNotes() { return isMyTurn() && state.session.turnNumber < state.session.maxTurns; }
 function toggleNote(candidate) {
   if (!canEditNotes()) return;
   if (state.playing) stopPlayback();
-  const participantNote = state.draftNotes.some((note) => note.owner !== "system"
-    && note.bar === candidate.bar && note.pitch === candidate.pitch);
-  if (participantNote) {
-    state.draftNotes = removeParticipantNote(state.draftNotes, candidate).notes;
+  const existingNote = state.draftNotes.some((note) => note.bar === candidate.bar && note.pitch === candidate.pitch);
+  if (existingNote) {
+    state.draftNotes = removeNote(state.draftNotes, candidate).notes;
   } else {
     const placed = placeNote(state.draftNotes, { ...candidate, durationBeats: 4, owner: state.role });
     if (placed.outcome === "chord-full") { showToast("1つの和音には8音まで置けます．", true); return; }
-    if (placed.outcome === "duplicate") { showToast("その音は基本和音に含まれています．", true); return; }
+    if (placed.outcome === "duplicate") { return; }
     state.draftNotes = placed.notes;
     playSingle(candidate.pitch, state.role);
   }
@@ -262,7 +278,7 @@ function updateSessionUi() {
 }
 function applyLatestTurn() {
   const latest = state.turns.at(-1);
-  state.baseNotes = sanitizeNotes(latest?.notes?.length ? latest.notes : SYSTEM_NOTES);
+  state.baseNotes = sanitizeNotes(latest ? latest.notes : SYSTEM_NOTES);
   state.draftNotes = structuredClone(state.baseNotes);
   renderGrid(); renderHistory();
 }
@@ -318,30 +334,42 @@ function textRow(label, text, secret = false) {
   if (secret) p.className = "history-secret";
   return p;
 }
-function createMiniPianoRoll(notes) {
+function createHistoryPianoRoll(notes) {
+  const frame = document.createElement("div");
+  frame.className = "history-roll-frame";
   const roll = document.createElement("div");
-  roll.className = "mini-piano-roll";
-  roll.setAttribute("role", "img");
+  roll.className = "history-piano-roll";
   roll.setAttribute("aria-label", "このターンで確定した4和音のピアノロール");
   const pitchRows = pitchesDescending();
+
+  const corner = document.createElement("div");
+  corner.className = "history-corner";
+  corner.textContent = "音名";
+  roll.append(corner);
   for (let bar = 0; bar < HARMONY.length; bar += 1) {
-    const chord = document.createElement("div"); chord.className = "mini-chord";
-    const label = document.createElement("span"); label.className = "mini-chord-label"; label.textContent = `${bar + 1}｜${HARMONY[bar].label}`;
-    const noteArea = document.createElement("div"); noteArea.className = "mini-note-area";
-    for (const note of notes.filter((candidate) => candidate.owner !== "system" && candidate.bar === bar)) {
-      const pitchIndex = pitchRows.indexOf(note.pitch);
-      if (pitchIndex < 0) continue;
-      const mark = document.createElement("span");
-      mark.className = `mini-note ${note.owner === state.role ? "mini-note-mine" : "mini-note-other"}`;
-      const verticalPosition = pitchIndex / (pitchRows.length - 1);
-      mark.style.top = `calc(${verticalPosition * 100}% - ${verticalPosition * 6}px)`;
-      mark.title = note.pitch;
-      noteArea.append(mark);
-    }
-    chord.append(label, noteArea);
-    roll.append(chord);
+    const head = document.createElement("div");
+    head.className = "history-chord-head";
+    head.innerHTML = `<strong>${bar + 1}｜${HARMONY[bar].label}</strong><small>${HARMONY[bar].tones}</small>`;
+    roll.append(head);
   }
-  return roll;
+  for (const pitch of pitchRows) {
+    const key = document.createElement("div");
+    key.className = `history-key${pitch.includes("#") ? " black" : ""}`;
+    key.textContent = pitch;
+    roll.append(key);
+    for (let bar = 0; bar < HARMONY.length; bar += 1) {
+      const cell = document.createElement("div");
+      cell.className = `history-cell${pitch.includes("#") ? " black-row" : ""}`;
+      const cellNotes = notes.filter((note) => note.pitch === pitch && note.bar === bar);
+      cellNotes.forEach((note, index) => cell.append(renderNote(note, index, cellNotes.length)));
+      cell.setAttribute("aria-label", cellNotes.length
+        ? `${bar + 1}番目の和音 ${cellNotes.map((note) => noteDescription(note)).join("，")}`
+        : `${bar + 1}番目の和音 ${pitch} 音なし`);
+      roll.append(cell);
+    }
+  }
+  frame.append(roll);
+  return frame;
 }
 function renderHistory() {
   if (state.playing && state.playbackButton?.classList.contains("history-play-button")) stopPlayback();
@@ -359,7 +387,7 @@ function renderHistory() {
     const playButton = document.createElement("button"); playButton.type = "button"; playButton.className = "button secondary history-play-button"; playButton.textContent = "▶ このターンを聴く";
     playButton.dataset.playLabel = "▶ このターンを聴く";
     playButton.addEventListener("click", () => togglePlayback(turnNotes, playButton));
-    board.append(createMiniPianoRoll(turnNotes), playButton); item.append(board);
+    board.append(playButton, createHistoryPianoRoll(turnNotes)); item.append(board);
     if (reflection) {
       item.append(textRow("解釈", reflection.interpretation), textRow("意図", reflection.intention), textRow("予想", reflection.guess));
     } else {
