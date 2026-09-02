@@ -344,6 +344,7 @@ function createMiniPianoRoll(notes) {
   return roll;
 }
 function renderHistory() {
+  if (state.playing && state.playbackButton?.classList.contains("history-play-button")) stopPlayback();
   const list = $("history-list"); list.replaceChildren();
   if (!state.turns.length) { list.append(textRow("履歴", "まだ確定されたターンはありません．")); return; }
   for (const turn of state.turns) {
