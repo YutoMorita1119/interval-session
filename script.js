@@ -44,17 +44,15 @@ let tutorialState = createTutorialState();
 const tutorialNotes = new Set();
 
 function sanitizeNotes(notes) {
-  const participantNotes = [];
+  let normalizedNotes = structuredClone(SYSTEM_NOTES);
   const validPitches = new Set(pitchesDescending());
   for (const note of Array.isArray(notes) ? notes : []) {
     if (!note || !validPitches.has(note.pitch) || !["host", "guest"].includes(note.owner)
       || !Number.isInteger(note.bar) || note.bar < 0 || note.bar >= HARMONY.length) continue;
-    if (participantNotes.some((candidate) => candidate.bar === note.bar && candidate.pitch === note.pitch)) continue;
-    if (participantNotes.filter((candidate) => candidate.bar === note.bar).length >= 8) continue;
-    if (SYSTEM_NOTES.some((candidate) => candidate.bar === note.bar && candidate.pitch === note.pitch)) continue;
-    participantNotes.push({ ...note, beat: 0, durationBeats: 4 });
+    const placed = placeNote(normalizedNotes, { ...note, beat: 0, durationBeats: 4 });
+    normalizedNotes = placed.notes;
   }
-  return [...structuredClone(SYSTEM_NOTES), ...participantNotes];
+  return normalizedNotes;
 }
 function sessionCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -329,16 +327,18 @@ function createMiniPianoRoll(notes) {
   for (let bar = 0; bar < HARMONY.length; bar += 1) {
     const chord = document.createElement("div"); chord.className = "mini-chord";
     const label = document.createElement("span"); label.className = "mini-chord-label"; label.textContent = `${bar + 1}｜${HARMONY[bar].label}`;
-    chord.append(label);
+    const noteArea = document.createElement("div"); noteArea.className = "mini-note-area";
     for (const note of notes.filter((candidate) => candidate.owner !== "system" && candidate.bar === bar)) {
       const pitchIndex = pitchRows.indexOf(note.pitch);
       if (pitchIndex < 0) continue;
       const mark = document.createElement("span");
       mark.className = `mini-note ${note.owner === state.role ? "mini-note-mine" : "mini-note-other"}`;
-      mark.style.top = `calc(${(pitchIndex / (pitchRows.length - 1)) * 100}% - 3px)`;
+      const verticalPosition = pitchIndex / (pitchRows.length - 1);
+      mark.style.top = `calc(${verticalPosition * 100}% - ${verticalPosition * 6}px)`;
       mark.title = note.pitch;
-      chord.append(mark);
+      noteArea.append(mark);
     }
+    chord.append(label, noteArea);
     roll.append(chord);
   }
   return roll;
