@@ -471,14 +471,16 @@ function createResultPrompt(label, value, className) {
   const prompt = document.createElement("strong"); prompt.textContent = value;
   card.append(caption, prompt); return card;
 }
-function createPredictionLane(label, mobileLabel, result, className) {
+function createPredictionLane({ directionLabel, mobileLabel, ownerLabel, comparisonTarget, result, className }) {
   const lane = document.createElement("section"); lane.className = `prediction-lane ${className}`;
-  const direction = document.createElement("strong"); direction.className = "prediction-direction"; direction.textContent = label; direction.dataset.mobileLabel = mobileLabel;
-  const detail = document.createElement("span"); detail.className = "prediction-detail"; detail.textContent = `最終予想：${result.guess}`;
+  const direction = document.createElement("span"); direction.className = "prediction-direction"; direction.textContent = directionLabel; direction.dataset.mobileLabel = mobileLabel;
+  const content = document.createElement("div"); content.className = "prediction-content";
+  const owner = document.createElement("span"); owner.className = "prediction-owner"; owner.textContent = ownerLabel;
+  const detail = document.createElement("strong"); detail.className = "prediction-detail"; detail.textContent = result.guess;
   const judgement = document.createElement("span");
   judgement.className = `prediction-judgement ${result.isCorrect ? "correct" : "incorrect"}`;
-  judgement.textContent = result.isCorrect ? "○ 一致" : "× 不一致";
-  lane.append(direction, detail, judgement); return lane;
+  judgement.textContent = `${result.isCorrect ? "○" : "×"} ${comparisonTarget}と${result.isCorrect ? "一致" : "不一致"}`;
+  content.append(owner, detail, judgement); lane.append(direction, content); return lane;
 }
 function renderResults() {
   const comparison = $("result-comparison"); comparison.replaceChildren();
@@ -501,8 +503,8 @@ function renderResults() {
   comparison.className = "result-comparison ready";
   comparison.append(
     createResultPrompt("あなたのお題", myPrompt, "mine"),
-    createPredictionLane("あなた → 相手", "あなた ↓ 相手", results.mine, "toward-other"),
-    createPredictionLane("相手 → あなた", "相手 ↑ あなた", results.opponent, "toward-mine"),
+    createPredictionLane({ directionLabel: "あなた → 相手", mobileLabel: "あなた ↓ 相手", ownerLabel: "あなたの予想", comparisonTarget: "相手のお題", result: results.mine, className: "toward-other" }),
+    createPredictionLane({ directionLabel: "相手 → あなた", mobileLabel: "相手 ↑ あなた", ownerLabel: "相手の予想", comparisonTarget: "あなたのお題", result: results.opponent, className: "toward-mine" }),
     createResultPrompt("相手のお題", otherPrompt, "other"),
   );
 }
