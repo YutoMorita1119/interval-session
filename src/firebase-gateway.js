@@ -9,6 +9,7 @@ import {
 import {
   collection,
   doc,
+  getDoc,
   getFirestore,
   onSnapshot,
   orderBy,
@@ -23,6 +24,7 @@ import {
   buildTurnCommitWrites,
   privateDocumentPath,
   reflectionsCollectionPath,
+  participantRole,
   sessionDocumentPath,
 } from './firestore-contract.js';
 
@@ -113,6 +115,22 @@ export function createFirebaseGateway(firebaseConfig) {
     });
   }
 
+  async function resumeSession({ sessionId }) {
+    const user = requireUser(auth);
+    const snapshot = await getDoc(doc(database, sessionDocumentPath(sessionId)));
+
+    if (!snapshot.exists()) {
+      throw new Error('Session not found');
+    }
+
+    const role = participantRole(snapshot.data(), user.uid);
+    if (!role) {
+      throw new Error('Authenticated user is not a session participant');
+    }
+
+    return { sessionId, role, uid: user.uid };
+  }
+
   function listenSession(sessionId, listener, onError) {
     requireUser(auth);
     return onSnapshot(
@@ -196,6 +214,7 @@ export function createFirebaseGateway(firebaseConfig) {
     listenToAuthentication,
     createSession,
     joinSession,
+    resumeSession,
     listenSession,
     listenTurns,
     listenPrivateData,

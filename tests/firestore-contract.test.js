@@ -6,6 +6,7 @@ import {
   buildJoinSessionWrites,
   buildTurnCommitWrites,
   privateDocumentPath,
+  participantRole,
   reflectionsCollectionPath,
   reflectionDocumentPath,
   sessionDocumentPath,
@@ -38,6 +39,14 @@ test('秘密データは進行中は自分のroleだけ，完了後は参加者�
     { ...activeSession, status: 'completed' },
     'outsider-uid',
   ), []);
+});
+
+test('認証UIDからセッション内の役割を安全に判定する', () => {
+  const session = { hostUid: 'host-uid', guestUid: 'guest-uid' };
+
+  assert.equal(participantRole(session, 'host-uid'), 'host');
+  assert.equal(participantRole(session, 'guest-uid'), 'guest');
+  assert.equal(participantRole(session, 'outsider-uid'), null);
 });
 
 test('手番確定は公開ノート，書き手だけの振り返り，次の手番を一つの書き込み計画にする', () => {

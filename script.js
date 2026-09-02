@@ -1,7 +1,7 @@
 import { buildPlaybackSchedule } from "./src/audio-schedule.js";
 import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
-import { createFirebaseGateway } from "./src/firebase-gateway.js?v=3";
+import { createFirebaseGateway } from "./src/firebase-gateway.js?v=4";
 import { MAX_TURNS } from "./src/game-domain.js";
 import { classifyNoteRole, normalizeBoardNotes, noteToFrequency, placeNote, removeNote } from "./src/music-domain.js";
 import {
@@ -14,6 +14,7 @@ import {
 } from "./src/tutorial-domain.js";
 
 const BPM = 100;
+const ACTIVE_SESSION_KEY = "interval-session:active-session";
 const PROMPTS = ["流星群", "氷の結晶", "樹齢を重ねた大木", "ガラスの破片", "猛獣の暴走", "不気味な地下室"];
 const HARMONY = [
   { root: "C3", context: "Major", label: "C", tones: "C・E・G" },
@@ -43,6 +44,7 @@ const state = {
 let tutorialState = createTutorialState();
 const tutorialNotes = new Set();
 const TUTORIAL_SYSTEM_NOTES = new Set(["G4:0", "A4:1", "G4:2", "G4:3"]);
+let restoringSession = false;
 
 function sanitizeNotes(notes) {
   return normalizeBoardNotes(notes, {
@@ -68,6 +70,18 @@ function tutorialWasSeen() {
 function rememberTutorial() {
   try { localStorage.setItem("interval-session:tutorial-seen", "1"); }
   catch { /* Storage may be unavailable in a restricted browser. */ }
+}
+function rememberedSessionId() {
+  try { return sessionStorage.getItem(ACTIVE_SESSION_KEY); }
+  catch { return null; }
+}
+function rememberSession(sessionId) {
+  try { sessionStorage.setItem(ACTIVE_SESSION_KEY, sessionId); }
+  catch { /* Session restoration is optional when storage is unavailable. */ }
+}
+function forgetSession() {
+  try { sessionStorage.removeItem(ACTIVE_SESSION_KEY); }
+  catch { /* Session restoration is optional when storage is unavailable. */ }
 }
 function renderTutorial() {
   for (let step = 1; step <= 3; step += 1) $(`tutorial-step-${step}`).hidden = tutorialState.step !== step;
@@ -298,6 +312,7 @@ async function commitTurn() {
 
 function enterSession({ sessionId, role, uid }) {
   state.sessionId = sessionId; state.role = role; state.uid = uid;
+  rememberSession(sessionId);
   $("session-id-label").textContent = sessionId;
   $("lobby-view").hidden = true; $("game-view").hidden = false;
   state.unsubscribers.push(
@@ -449,7 +464,23 @@ if (!tutorialWasSeen()) openTutorial();
 gateway.listenToAuthentication((user) => {
   state.uid = user?.uid ?? null;
   $("auth-dot").classList.toggle("online", Boolean(user));
-  $("auth-status").textContent = user ? "Firebaseへ匿名接続済み" : "匿名接続を準備中";
-  $("create-session-btn").disabled = !user; $("join-session-btn").disabled = !user;
+  const sessionId = user && !state.sessionId && !restoringSession ? rememberedSessionId() : null;
+  $("auth-status").textContent = sessionId ? "セッションへ復帰中" : user ? "Firebaseへ匿名接続済み" : "匿名接続を準備中";
+  $("create-session-btn").disabled = !user || Boolean(sessionId);
+  $("join-session-btn").disabled = !user || Boolean(sessionId);
+  if (sessionId) {
+    restoringSession = true;
+    gateway.resumeSession({ sessionId })
+      .then(enterSession)
+      .catch(() => forgetSession())
+      .finally(() => {
+        restoringSession = false;
+        if (!state.sessionId) {
+          $("auth-status").textContent = "Firebaseへ匿名接続済み";
+          $("create-session-btn").disabled = false;
+          $("join-session-btn").disabled = false;
+        }
+      });
+  }
 });
 gateway.authenticateAnonymously().catch((error) => showToast(friendlyError(error), true));

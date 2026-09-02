@@ -39,9 +39,15 @@ export function reflectionsCollectionPath(sessionId, role) {
 }
 
 export function visiblePrivateRoles(session, uid) {
-  const role = uid === session.hostUid ? 'host' : uid === session.guestUid ? 'guest' : null;
+  const role = participantRole(session, uid);
   if (!role) return [];
   return session.status === 'completed' ? ['host', 'guest'] : [role];
+}
+
+export function participantRole(session, uid) {
+  if (uid === session.hostUid) return 'host';
+  if (uid === session.guestUid) return 'guest';
+  return null;
 }
 
 function validateTurnNumber(turnNumber) {
