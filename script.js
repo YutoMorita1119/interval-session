@@ -1,7 +1,7 @@
 import { buildPlaybackSchedule } from "./src/audio-schedule.js";
 import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
-import { createFirebaseGateway } from "./src/firebase-gateway.js";
+import { createFirebaseGateway } from "./src/firebase-gateway.js?v=3";
 import { MAX_TURNS } from "./src/game-domain.js";
 import { classifyNoteRole, noteToFrequency, placeNote } from "./src/music-domain.js";
 import {

@@ -5,6 +5,16 @@
   "hosting": {
     "site": "musical-comms-app",
     "public": ".",
+    "headers": [
+      {
+        "source": "**/*.js",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      },
+      {
+        "source": "**/*.css",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      }
+    ],
     "ignore": [
       "firebase.json",
       ".firebaserc",
