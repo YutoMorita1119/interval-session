@@ -474,13 +474,14 @@ function createResultPrompt(label, value, className) {
 function createPredictionLane({ directionLabel, mobileLabel, ownerLabel, comparisonTarget, result, className }) {
   const lane = document.createElement("section"); lane.className = `prediction-lane ${className}`;
   const direction = document.createElement("span"); direction.className = "prediction-direction"; direction.textContent = directionLabel; direction.dataset.mobileLabel = mobileLabel;
+  const arrow = document.createElement("span"); arrow.className = "prediction-arrow"; arrow.setAttribute("aria-hidden", "true"); arrow.append(direction);
   const content = document.createElement("div"); content.className = "prediction-content";
   const owner = document.createElement("span"); owner.className = "prediction-owner"; owner.textContent = ownerLabel;
   const detail = document.createElement("strong"); detail.className = "prediction-detail"; detail.textContent = result.guess;
   const judgement = document.createElement("span");
   judgement.className = `prediction-judgement ${result.isCorrect ? "correct" : "incorrect"}`;
   judgement.textContent = `${result.isCorrect ? "○" : "×"} ${comparisonTarget}と${result.isCorrect ? "一致" : "不一致"}`;
-  content.append(owner, detail, judgement); lane.append(direction, content); return lane;
+  content.append(owner, detail, judgement); lane.append(content, arrow); return lane;
 }
 function renderResults() {
   const comparison = $("result-comparison"); comparison.replaceChildren();
