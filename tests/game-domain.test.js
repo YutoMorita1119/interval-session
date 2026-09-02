@@ -5,8 +5,19 @@ import {
   commitTurn,
   createSession,
   getSessionView,
+  hasCurrentBoardSnapshot,
   joinSession,
 } from "../src/game-domain.js";
+
+test("現在の手番に対応する確定盤面が届くまで編集を待つ", () => {
+  assert.equal(hasCurrentBoardSnapshot(null, 0), false);
+  assert.equal(hasCurrentBoardSnapshot({ status: "waiting", turnNumber: 1, maxTurns: 7 }, 0), true);
+  assert.equal(hasCurrentBoardSnapshot({ status: "active", turnNumber: 4, maxTurns: 7 }, 2), false);
+  assert.equal(hasCurrentBoardSnapshot({ status: "active", turnNumber: 4, maxTurns: 7 }, 3), true);
+  assert.equal(hasCurrentBoardSnapshot({ status: "active", turnNumber: 4, maxTurns: 7 }, 4), false);
+  assert.equal(hasCurrentBoardSnapshot({ status: "completed", turnNumber: 7, maxTurns: 7 }, 6), false);
+  assert.equal(hasCurrentBoardSnapshot({ status: "completed", turnNumber: 7, maxTurns: 7 }, 7), true);
+});
 
 test("ホストが7ターン制の待機中セッションを作成できる", () => {
   const session = createSession({

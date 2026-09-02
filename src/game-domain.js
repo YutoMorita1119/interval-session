@@ -8,6 +8,14 @@ export class GameDomainError extends Error {
   }
 }
 
+export function hasCurrentBoardSnapshot(session, committedTurnCount) {
+  if (!session) return false;
+  const requiredTurnCount = session.status === "completed"
+    ? session.maxTurns
+    : Math.max(0, session.turnNumber - 1);
+  return committedTurnCount === requiredTurnCount;
+}
+
 export function createSession({ id, hostId, prompts, initialNotes = [] }) {
   return {
     id,

@@ -2,7 +2,7 @@ import { buildPlaybackSchedule } from "./src/audio-schedule.js";
 import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
 import { createFirebaseGateway } from "./src/firebase-gateway.js?v=4";
-import { MAX_TURNS } from "./src/game-domain.js";
+import { hasCurrentBoardSnapshot, MAX_TURNS } from "./src/game-domain.js";
 import { classifyNoteRole, normalizeBoardNotes, noteToFrequency, placeNote, removeNote } from "./src/music-domain.js";
 import {
   completeTutorial,
@@ -39,7 +39,7 @@ const state = {
   uid: null, role: null, sessionId: null, session: null, privateData: null,
   turns: [], reflections: { host: [], guest: [] }, opponentPrivate: null,
   baseNotes: structuredClone(SYSTEM_NOTES), draftNotes: structuredClone(SYSTEM_NOTES),
-  unsubscribers: [], playing: false, playbackButton: null, revealed: false,
+  unsubscribers: [], turnsLoaded: false, playing: false, playbackButton: null, revealed: false,
 };
 let tutorialState = createTutorialState();
 const tutorialNotes = new Set();
@@ -212,7 +212,7 @@ function noteDescription(note) {
   return `${note.pitch}｜${harmonic.degree}｜${ownerLabel(note.owner)}`;
 }
 function isMyTurn() { return state.session?.status === "active" && state.session.currentPlayerUid === state.uid; }
-function canEditNotes() { return isMyTurn() && state.session.turnNumber < state.session.maxTurns; }
+function canEditNotes() { return state.turnsLoaded && isMyTurn() && state.session.turnNumber < state.session.maxTurns; }
 function toggleNote(candidate) {
   if (!canEditNotes()) return;
   if (state.playing) stopPlayback();
@@ -273,8 +273,8 @@ function updateForm() {
   const intention = $("intention-input").value.trim();
   const guess = $("guess-select").value;
   const valid = turn === 1 ? Boolean(intention) : turn === MAX_TURNS ? Boolean(interpretation && guess) : Boolean(interpretation && intention && guess);
-  $("commit-btn").disabled = !(isMyTurn() && valid);
-  $("requirement-text").textContent = !isMyTurn() ? "あなたの手番になると記録を送れます．" : valid ? "送信できます．確定後は編集できません．" : turn === 1 ? "今回の意図を入力してください．" : turn === MAX_TURNS ? "最終ターンでは音を編集せず，解釈と相手のお題の予想を入力してください．" : "解釈，意図，相手のお題の予想を入力してください．";
+  $("commit-btn").disabled = !(state.turnsLoaded && isMyTurn() && valid);
+  $("requirement-text").textContent = !state.turnsLoaded ? "盤面を読み込んでいます．" : !isMyTurn() ? "あなたの手番になると記録を送れます．" : valid ? "送信できます．確定後は編集できません．" : turn === 1 ? "今回の意図を入力してください．" : turn === MAX_TURNS ? "最終ターンでは音を編集せず，解釈と相手のお題の予想を入力してください．" : "解釈，意図，相手のお題の予想を入力してください．";
 }
 function updateSessionUi() {
   if (!state.session) return;
@@ -294,7 +294,8 @@ function applyLatestTurn() {
   const latest = state.turns.at(-1);
   state.baseNotes = sanitizeNotes(latest ? latest.notes : SYSTEM_NOTES);
   state.draftNotes = structuredClone(state.baseNotes);
-  renderGrid(); renderHistory();
+  state.turnsLoaded = hasCurrentBoardSnapshot(state.session, state.turns.length);
+  renderGrid(); renderHistory(); updateForm();
 }
 
 function clearInputs() {
@@ -302,7 +303,7 @@ function clearInputs() {
   $("interpretation-count").textContent = "0"; $("intention-count").textContent = "0";
 }
 async function commitTurn() {
-  if (!isMyTurn()) return;
+  if (!state.turnsLoaded || !isMyTurn()) return;
   $("commit-btn").disabled = true;
   try {
     await gateway.commitTurn({ sessionId: state.sessionId, notes: state.draftNotes, reflection: { interpretation: $("interpretation-input").value.trim(), intention: $("intention-input").value.trim(), guess: $("guess-select").value } });
@@ -312,11 +313,16 @@ async function commitTurn() {
 
 function enterSession({ sessionId, role, uid }) {
   state.sessionId = sessionId; state.role = role; state.uid = uid;
+  state.turnsLoaded = false;
   rememberSession(sessionId);
   $("session-id-label").textContent = sessionId;
   $("lobby-view").hidden = true; $("game-view").hidden = false;
   state.unsubscribers.push(
-    gateway.listenSession(sessionId, (session) => { state.session = session; updateSessionUi(); renderHistory(); }, (error) => showToast(friendlyError(error), true)),
+    gateway.listenSession(sessionId, (session) => {
+      state.session = session;
+      state.turnsLoaded = hasCurrentBoardSnapshot(state.session, state.turns.length);
+      updateSessionUi(); renderHistory();
+    }, (error) => showToast(friendlyError(error), true)),
     gateway.listenTurns(sessionId, (turns) => { state.turns = turns; applyLatestTurn(); }, (error) => showToast(friendlyError(error), true)),
     gateway.listenPrivateData(sessionId, role, (data) => {
       state.privateData = data;
