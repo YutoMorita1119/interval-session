@@ -1,0 +1,9 @@
+{
+  "name": "interval-session",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check script.js"
+  }
+}

@@ -1,0 +1,185 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function sessionPath(sessionId) {
+      return /databases/$(database)/documents/sessions/$(sessionId);
+    }
+
+    function sessionBefore(sessionId) {
+      return get(sessionPath(sessionId)).data;
+    }
+
+    function sessionAfter(sessionId) {
+      return getAfter(sessionPath(sessionId)).data;
+    }
+
+    function turnPath(sessionId, turnNumber) {
+      return /databases/$(database)/documents/sessions/$(sessionId)/turns/$(turnNumber);
+    }
+
+    function reflectionPath(sessionId, role, turnNumber) {
+      return /databases/$(database)/documents/sessions/$(sessionId)/private/$(role)/reflections/$(turnNumber);
+    }
+
+    function privatePath(sessionId, role) {
+      return /databases/$(database)/documents/sessions/$(sessionId)/private/$(role);
+    }
+
+    function promptsAreDifferent(sessionId) {
+      return existsAfter(privatePath(sessionId, 'host'))
+        && existsAfter(privatePath(sessionId, 'guest'))
+        && getAfter(privatePath(sessionId, 'host')).data.prompt
+          != getAfter(privatePath(sessionId, 'guest')).data.prompt;
+    }
+
+    function roleFor(session) {
+      return request.auth.uid == session.hostUid ? 'host' : 'guest';
+    }
+
+    function ownsRole(session, role) {
+      return (role == 'host' && request.auth.uid == session.hostUid)
+        || (role == 'guest' && request.auth.uid == session.guestUid);
+    }
+
+    function hasCommitDocuments(sessionId, before) {
+      return existsAfter(turnPath(sessionId, before.turnNumber))
+        && existsAfter(reflectionPath(sessionId, roleFor(before), before.turnNumber));
+    }
+
+    function isParticipant(session) {
+      return signedIn() && request.auth.uid in session.participantUids;
+    }
+
+    function isJoin(before, after) {
+      return before.status == 'waiting'
+        && before.guestUid == null
+        && request.auth.uid != before.hostUid
+        && after.diff(before).affectedKeys().hasOnly([
+          'status', 'guestUid', 'participantUids', 'updatedAt'
+        ])
+        && after.status == 'active'
+        && after.guestUid == request.auth.uid
+        && after.participantUids == [before.hostUid, request.auth.uid];
+    }
+
+    function isNormalTurnCommit(before, after) {
+      return before.status == 'active'
+        && before.currentPlayerUid == request.auth.uid
+        && before.turnNumber < before.maxTurns
+        && after.diff(before).affectedKeys().hasOnly([
+          'turnNumber', 'currentPlayerUid', 'status', 'updatedAt'
+        ])
+        && after.turnNumber == before.turnNumber + 1
+        && after.status == 'active'
+        && after.currentPlayerUid == (
+          request.auth.uid == before.hostUid ? before.guestUid : before.hostUid
+        );
+    }
+
+    function isFinalTurnCommit(before, after) {
+      return before.status == 'active'
+        && before.currentPlayerUid == request.auth.uid
+        && before.turnNumber == before.maxTurns
+        && after.diff(before).affectedKeys().hasOnly([
+          'currentPlayerUid', 'status', 'updatedAt', 'completedAt'
+        ])
+        && after.turnNumber == before.turnNumber
+        && after.currentPlayerUid == null
+        && after.status == 'completed';
+    }
+
+    match /sessions/{sessionId} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'schemaVersion', 'status', 'hostUid', 'guestUid', 'participantUids',
+          'currentPlayerUid', 'turnNumber', 'maxTurns', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.guestUid == null
+        && request.resource.data.participantUids == [request.auth.uid]
+        && request.resource.data.currentPlayerUid == request.auth.uid
+        && request.resource.data.turnNumber == 1
+        && request.resource.data.maxTurns is int
+        && request.resource.data.maxTurns >= 1
+        && request.resource.data.maxTurns <= 20;
+
+      allow get: if isParticipant(resource.data)
+        || (signedIn() && resource.data.status == 'waiting');
+      allow list: if false;
+      allow update: if signedIn()
+        && (isJoin(resource.data, request.resource.data)
+          || (isParticipant(resource.data)
+            && hasCommitDocuments(sessionId, resource.data)
+            && (isNormalTurnCommit(resource.data, request.resource.data)
+              || isFinalTurnCommit(resource.data, request.resource.data))));
+      allow delete: if false;
+
+      match /turns/{turnId} {
+        allow read: if isParticipant(sessionBefore(sessionId));
+        allow create: if isParticipant(sessionBefore(sessionId))
+          && sessionBefore(sessionId).status == 'active'
+          && sessionBefore(sessionId).currentPlayerUid == request.auth.uid
+          && turnId == string(sessionBefore(sessionId).turnNumber)
+          && request.resource.data.keys().hasOnly([
+            'number', 'authorUid', 'notes', 'committedAt'
+          ])
+          && request.resource.data.number == sessionBefore(sessionId).turnNumber
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.notes is list
+          && request.resource.data.notes.size() <= 128
+          && sessionAfter(sessionId).updatedAt == request.resource.data.committedAt;
+        allow update, delete: if false;
+      }
+
+      match /private/{role} {
+        allow read: if isParticipant(sessionBefore(sessionId))
+          && (ownsRole(sessionBefore(sessionId), role)
+            || sessionBefore(sessionId).status == 'completed');
+        allow create: if signedIn()
+          && request.auth.uid == sessionAfter(sessionId).hostUid
+          && sessionAfter(sessionId).status == 'waiting'
+          && promptsAreDifferent(sessionId)
+          && (role == 'host' || role == 'guest')
+          && request.resource.data.keys().hasOnly([
+            'role', 'prompt', 'createdAt', 'updatedAt'
+          ])
+          && request.resource.data.role == role
+          && request.resource.data.prompt is string
+          && request.resource.data.prompt.size() > 0
+          && request.resource.data.prompt.size() <= 100;
+        allow update, delete: if false;
+
+        match /reflections/{turnId} {
+          allow read: if isParticipant(sessionBefore(sessionId))
+            && (ownsRole(sessionBefore(sessionId), role)
+              || sessionBefore(sessionId).status == 'completed');
+          allow create: if signedIn()
+            && isParticipant(sessionBefore(sessionId))
+            && ownsRole(sessionBefore(sessionId), role)
+            && sessionBefore(sessionId).status == 'active'
+            && sessionBefore(sessionId).currentPlayerUid == request.auth.uid
+            && turnId == string(sessionBefore(sessionId).turnNumber)
+            && request.resource.data.keys().hasOnly([
+              'role', 'turnNumber', 'intention', 'interpretation', 'guess', 'createdAt'
+            ])
+            && request.resource.data.role == role
+            && request.resource.data.turnNumber == sessionBefore(sessionId).turnNumber
+            && request.resource.data.intention is string
+            && request.resource.data.intention.size() <= 500
+            && request.resource.data.interpretation is string
+            && request.resource.data.interpretation.size() <= 500
+            && request.resource.data.guess is string
+            && request.resource.data.guess.size() <= 100;
+          allow update, delete: if false;
+        }
+      }
+    }
+  }
+}
