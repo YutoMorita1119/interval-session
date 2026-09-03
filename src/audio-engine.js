@@ -1,10 +1,11 @@
+const UNIFORM_VOICE_PROFILE = Object.freeze({ oscillator: "triangle", gain: 0.1 });
 const VOICE_PROFILES = Object.freeze({
-  melody: Object.freeze({ oscillator: "triangle", gain: 0.26 }),
-  chord: Object.freeze({ oscillator: "sine", gain: 0.22 }),
-  accompaniment: Object.freeze({ oscillator: "sine", gain: 0.22 }),
-  host: Object.freeze({ oscillator: "triangle", gain: 0.18 }),
-  guest: Object.freeze({ oscillator: "square", gain: 0.14 }),
-  system: Object.freeze({ oscillator: "sine", gain: 0.1 }),
+  melody: UNIFORM_VOICE_PROFILE,
+  chord: UNIFORM_VOICE_PROFILE,
+  accompaniment: UNIFORM_VOICE_PROFILE,
+  host: UNIFORM_VOICE_PROFILE,
+  guest: UNIFORM_VOICE_PROFILE,
+  system: UNIFORM_VOICE_PROFILE,
 });
 
 function browserAudioContextFactory() {

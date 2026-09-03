@@ -66,7 +66,7 @@ function createFakeAudioContext() {
   };
 }
 
-test("play時にAudioContextをlazy初期化し，声部ごとの音色と安全な出力段を構成する", async () => {
+test("play時に全声部を同じ波形とpeak gainで再生し，安全な出力段を構成する", async () => {
   const context = createFakeAudioContext();
   let factoryCalls = 0;
   const engine = createAudioEngine({
@@ -83,10 +83,11 @@ test("play時にAudioContextをlazy初期化し，声部ごとの音色と安全
   assert.equal(factoryCalls, 0);
   await engine.play([
     { voice: "melody", frequency: 440, startSeconds: 0, durationSeconds: 1 },
-    { voice: "chord", frequency: 330, startSeconds: 0, durationSeconds: 1 },
-    { voice: "host", frequency: 220, startSeconds: 0, durationSeconds: 1 },
-    { voice: "guest", frequency: 165, startSeconds: 0, durationSeconds: 1 },
-    { voice: "system", frequency: 110, startSeconds: 0, durationSeconds: 1 },
+    { voice: "chord", frequency: 392, startSeconds: 0, durationSeconds: 1 },
+    { voice: "accompaniment", frequency: 349.23, startSeconds: 0, durationSeconds: 1 },
+    { voice: "host", frequency: 329.63, startSeconds: 0, durationSeconds: 1 },
+    { voice: "guest", frequency: 261.63, startSeconds: 0, durationSeconds: 1 },
+    { voice: "system", frequency: 220, startSeconds: 0, durationSeconds: 1 },
   ]);
 
   assert.equal(factoryCalls, 1);
@@ -94,11 +95,11 @@ test("play時にAudioContextをlazy初期化し，声部ごとの音色と安全
   assert.equal(context.compressor.ratio.value, 20);
   assert.deepEqual(
     context.oscillators.map((oscillator) => oscillator.type),
-    ["triangle", "sine", "triangle", "square", "sine"],
+    ["triangle", "triangle", "triangle", "triangle", "triangle", "triangle"],
   );
   assert.deepEqual(
     context.gains.slice(1).map((node) => node.gain.calls[1][1]),
-    [0.26, 0.22, 0.18, 0.14, 0.1],
+    [0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
   );
   assert.ok(context.gains.slice(1).every((node) => node.gain.calls.at(-1)[1] === 0.0001));
 });

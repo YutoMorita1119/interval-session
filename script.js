@@ -5,13 +5,23 @@ import { createFirebaseGateway } from "./src/firebase-gateway.js?v=4";
 import { getBidirectionalFinalGuessResults, hasCurrentBoardSnapshot, MAX_TURNS } from "./src/game-domain.js";
 import { classifyNoteRole, normalizeBoardNotes, noteToFrequency, placeNote, removeNote } from "./src/music-domain.js";
 import {
+  acknowledgeTutorialOverview,
+  beginOpponentWait,
+  commitTutorialTurn,
   completeTutorial,
   createTutorialState,
   markBaseNoteRemoved,
+  markHistoryPlaybackPracticed,
   markNoteAdded,
-  markPlaybackPracticed,
-  moveToNextStep,
+  markOpponentNoteRemoved,
+  markPlaybackCompleted,
+  markPlaybackStarted,
+  markRecordCompleted,
+  openTutorialHistory,
+  receiveOpponentResponse,
+  revealTutorialPrompt,
   reviewTutorialResult,
+  startTutorial,
 } from "./src/tutorial-domain.js";
 
 const BPM = 100;
@@ -42,12 +52,14 @@ const state = {
   baseNotes: structuredClone(SYSTEM_NOTES), draftNotes: structuredClone(SYSTEM_NOTES),
   unsubscribers: [], sessionGeneration: 0, turnsLoaded: false, playing: false, playbackButton: null, revealed: false,
   historyOpenedFromResult: false,
+  tutorialMode: false,
 };
 let tutorialState = createTutorialState();
-const tutorialNotes = new Map();
+const TUTORIAL_PROMPTS = ["お題A", "お題B"];
+const TUTORIAL_UID = "tutorial-user";
 const TUTORIAL_INITIAL_NOTES = [
-  ["G4:0", "system"], ["A4:1", "system"], ["G4:2", "system"], ["G4:3", "system"],
-  ["C5:2", "guest"],
+  ...structuredClone(SYSTEM_NOTES),
+  { pitch: "D5", bar: 1, beat: 0, durationBeats: 4, owner: "guest" },
 ];
 let restoringSession = false;
 
@@ -92,73 +104,125 @@ function forSessionGeneration(generation, listener) {
     if (generation === state.sessionGeneration) listener(...args);
   };
 }
-function renderTutorial() {
-  for (let step = 1; step <= 3; step += 1) $(`tutorial-step-${step}`).hidden = tutorialState.step !== step;
-  $("tutorial-progress").textContent = `${tutorialState.step} / 3`;
-  const checks = [
-    ["tutorial-remove-check", tutorialState.baseNoteRemoved],
-    ["tutorial-add-check", tutorialState.noteAdded],
-    ["tutorial-play-check", tutorialState.playbackPracticed],
-  ];
-  for (const [id, done] of checks) {
-    $(id).classList.toggle("done", done);
-    $(id).textContent = `${done ? "✓" : "○"} ${$(id).textContent.replace(/^[✓○]\s*/, "")}`;
-  }
-  $("tutorial-next-2").disabled = !(tutorialState.baseNoteRemoved && tutorialState.noteAdded && tutorialState.playbackPracticed);
-  $("tutorial-result-preview").hidden = !tutorialState.resultReviewed;
-  $("tutorial-restart-btn").hidden = !tutorialState.resultReviewed;
-  $("finish-tutorial-btn").disabled = !tutorialState.resultReviewed;
+const TUTORIAL_GUIDE = Object.freeze({
+  overview: { chapter: "全体", title: "2人で音を伝え合う", copy: "2人に異なるお題が本人だけへ示されます．共有する音を7ターン交互に編集し，相手のお題を予想します．", action: "自分のお題を確認する", target: "game-view" },
+  prompt: { chapter: "お題", title: "自分のお題を確認する", copy: "右上の「あなたのお題」を押してください．お題と記録は，セッション終了まで相手には表示されません．", target: "theme-card" },
+  edit: { chapter: "音を編集", title: "共有する音を編集する", copy: "灰色の基本和音と赤い相手の音を1音ずつ削除し，空いているマスへ青い自分の音を1音追加してください．実際の手番でも，所有者を問わず盤面の音を削除できます．", target: "piano-roll" },
+  playback: { chapter: "音を編集", title: "配置した音を聴く", copy: "「全体を聴く」で再生を開始し，表示が「停止」に変わることを確認してから，もう一度押して停止してください．最後まで聴いた場合も次へ進みます．", target: "preview-btn" },
+  record: { chapter: "記録", title: "このターンを記録する", copy: "相手の音の解釈，自分が表した意図，相手のお題の予想を入力してください．内容は終了まで相手に非公開です．", target: "reflection-panel" },
+  commit: { chapter: "記録", title: "ターンを確定する", copy: "入力と現在の盤面を確定します．実際のセッションでは，確定後に相手の手番へ切り替わります．", target: "commit-btn" },
+  waiting: { chapter: "相手の手番", title: "相手の応答を待つ", copy: "実際のセッションでは，相手が確定すると画面が自動更新されます．ここではローカルの模擬応答を表示します．", action: "相手の応答を見る", target: "turn-lock" },
+  response: { chapter: "履歴", title: "相手の応答を受け取りました", copy: "赤い音が相手の追加した音です．右側の「履歴」を押して，盤面と記録の変化を確認してください．", target: "history-btn" },
+  history: { chapter: "履歴", title: "ターンごとの変化を確認する", copy: "履歴を閉じました．もう一度開くと，保存時の盤面，音名，度数，記録，再生操作を確認できます．", action: "履歴を開く", target: "history-btn" },
+});
+
+function removeTutorialFocus() {
+  document.querySelectorAll(".tutorial-focus").forEach((element) => element.classList.remove("tutorial-focus"));
 }
-function buildTutorialGrid() {
-  const grid = $("tutorial-grid"); grid.replaceChildren();
-  const corner = document.createElement("span"); corner.textContent = ""; grid.append(corner);
-  for (let chord = 0; chord < HARMONY.length; chord += 1) { const head = document.createElement("span"); head.textContent = `${chord + 1}｜${HARMONY[chord].label}`; grid.append(head); }
-  for (const pitch of ["C5", "A4", "G4"]) {
-    const label = document.createElement("span"); label.textContent = pitch; grid.append(label);
-    for (let beat = 0; beat < 4; beat += 1) {
-      const key = `${pitch}:${beat}`; const cell = document.createElement("button"); cell.type = "button";
-      const owner = tutorialNotes.get(key);
-      cell.setAttribute("aria-label", `${beat + 1}番目の和音 ${pitch}${owner === "system" ? " 基本和音．押すと削除" : owner === "guest" ? " 相手の音．押すと削除" : owner === "host" ? " あなたの音．押すと削除" : " 音なし．押すと追加"}`);
-      if (owner === "system") cell.classList.add("system");
-      if (owner === "guest") cell.classList.add("other");
-      if (owner === "host") cell.classList.add("selected");
-      cell.addEventListener("click", () => {
-        const currentOwner = tutorialNotes.get(key);
-        if (currentOwner) {
-          tutorialNotes.delete(key);
-          if (currentOwner === "system") tutorialState = markBaseNoteRemoved(tutorialState);
-        } else {
-          tutorialNotes.set(key, "host");
-          tutorialState = markNoteAdded(tutorialState);
-        }
-        buildTutorialGrid(); renderTutorial();
-      });
-      grid.append(cell);
-    }
+function renderTutorialGuide() {
+  const guide = $("tutorial-guide");
+  removeTutorialFocus();
+  if (!state.tutorialMode || ["result", "finished"].includes(tutorialState.stage)) {
+    guide.hidden = true;
+    return;
   }
+  const content = TUTORIAL_GUIDE[tutorialState.stage];
+  if (!content) { guide.hidden = true; return; }
+  guide.hidden = false;
+  guide.dataset.stage = tutorialState.stage;
+  $("tutorial-chapter").textContent = content.chapter;
+  $("tutorial-guide-title").textContent = content.title;
+  $("tutorial-guide-copy").textContent = content.copy;
+  const checklist = $("tutorial-checklist");
+  checklist.replaceChildren();
+  if (tutorialState.stage === "edit") {
+    const items = [
+      [tutorialState.baseNoteRemoved, "基本和音を1音削除"],
+      [tutorialState.opponentNoteRemoved, "相手の音を1音削除"],
+      [tutorialState.noteAdded, "空きマスへ自分の音を1音追加"],
+    ];
+    for (const [done, label] of items) {
+      const item = document.createElement("li");
+      item.classList.toggle("done", done); item.textContent = `${done ? "✓" : "○"} ${label}`; checklist.append(item);
+    }
+    checklist.hidden = false;
+  } else checklist.hidden = true;
+  const action = $("tutorial-guide-action");
+  action.hidden = !content.action;
+  action.textContent = content.action || "次へ";
+  const target = $(content.target) || document.querySelector(`.${content.target}`);
+  target?.classList.add("tutorial-focus");
+}
+function populateGuessOptions(prompts = PROMPTS) {
+  const select = $("guess-select"); select.replaceChildren();
+  const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "選択してください"; select.append(placeholder);
+  for (const prompt of prompts) { const option = document.createElement("option"); option.value = prompt; option.textContent = prompt; select.append(option); }
 }
 function openTutorial() {
-  tutorialState = createTutorialState(); tutorialNotes.clear();
-  TUTORIAL_INITIAL_NOTES.forEach(([key, owner]) => tutorialNotes.set(key, owner));
-  buildTutorialGrid(); renderTutorial();
-  if (!$("tutorial-dialog").open) $("tutorial-dialog").showModal();
+  stopSessionListeners(); stopPlayback(); clearInputs();
+  tutorialState = startTutorial(createTutorialState());
+  state.tutorialMode = true;
+  document.body.classList.add("tutorial-active");
+  state.role = "host"; state.sessionId = "LOCAL";
+  state.session = { status: "active", turnNumber: 3, maxTurns: MAX_TURNS, hostUid: TUTORIAL_UID, guestUid: "tutorial-guest", currentPlayerUid: TUTORIAL_UID };
+  state.privateData = { prompt: "お題A" }; state.opponentPrivate = null;
+  state.turns = [
+    { number: 1, authorUid: TUTORIAL_UID, notes: structuredClone(SYSTEM_NOTES) },
+    { number: 2, authorUid: "tutorial-guest", notes: structuredClone(TUTORIAL_INITIAL_NOTES) },
+  ];
+  state.reflections = {
+    host: [{ turnNumber: 1, interpretation: "", intention: "最初の響きを保った", guess: "" }],
+    guest: [{ turnNumber: 2, interpretation: "穏やかな始まりに感じた", intention: "少し高い音で応答した", guess: "お題A" }],
+  };
+  state.baseNotes = structuredClone(TUTORIAL_INITIAL_NOTES); state.draftNotes = structuredClone(TUTORIAL_INITIAL_NOTES);
+  state.turnsLoaded = true; state.revealed = false; state.historyOpenedFromResult = false;
+  populateGuessOptions(TUTORIAL_PROMPTS);
+  $("tutorial-show-result-btn").disabled = true;
+  $("session-id-label").textContent = "LOCAL"; $("copy-session-btn").disabled = true;
+  $("theme-card").setAttribute("aria-expanded", "false"); $("theme-text").textContent = "クリックして表示";
+  $("lobby-view").hidden = true; $("game-view").hidden = false;
+  updateSessionUi(); renderHistory(); renderTutorialGuide();
+  $("tutorial-guide-action").focus();
 }
 function closeTutorial() {
-  audio.stop(); tutorialState = createTutorialState(); tutorialNotes.clear();
-  if ($("tutorial-dialog").open) $("tutorial-dialog").close();
+  if (!state.tutorialMode) return;
+  stopPlayback(); tutorialState = createTutorialState(); state.tutorialMode = false;
+  document.body.classList.remove("tutorial-active");
+  $("tutorial-history-note").hidden = true; removeTutorialFocus();
+  returnToLobby();
+  $("open-tutorial-btn").focus();
 }
-function finishTutorial() {
-  tutorialState = completeTutorial(tutorialState);
-  if (tutorialState.completed) closeTutorial();
+function tutorialOpponentResponse() {
+  if (!state.tutorialMode || tutorialState.stage !== "waiting") return;
+  tutorialState = receiveOpponentResponse(tutorialState);
+  const responseNotes = [
+    ...structuredClone(state.baseNotes),
+    { pitch: "E5", bar: 3, beat: 0, durationBeats: 4, owner: "guest" },
+  ];
+  state.turns.push({ number: 4, authorUid: "tutorial-guest", notes: responseNotes });
+  state.reflections.guest.push({ turnNumber: 4, interpretation: "明るさが加わったと感じた", intention: "高い音で応答した", guess: "お題A" });
+  state.session = { ...state.session, turnNumber: 5, currentPlayerUid: TUTORIAL_UID };
+  state.baseNotes = sanitizeNotes(responseNotes); state.draftNotes = structuredClone(state.baseNotes);
+  state.turnsLoaded = true; updateSessionUi(); renderHistory(); renderTutorialGuide();
+  $("history-btn").focus();
 }
-async function playTutorialNotes() {
-  if (!tutorialNotes.size) { showToast("先にマスを押して音を置いてください．", true); return; }
-  const events = [...tutorialNotes].map(([key, owner]) => {
-    const [pitch, beatText] = key.split(":");
-    return { voice: owner, frequency: noteToFrequency(pitch), startSeconds: Number(beatText) * .55, durationSeconds: .48 };
-  });
-  tutorialState = markPlaybackPracticed(tutorialState); renderTutorial();
-  await audio.play(events);
+function showTutorialResult() {
+  if (!state.tutorialMode || tutorialState.stage !== "history") return;
+  tutorialState = reviewTutorialResult(tutorialState, { myGuess: "お題B", opponentPrompt: "お題B", opponentGuess: "お題A", myPrompt: "お題A" });
+  if (tutorialState.stage !== "result") return;
+  const finalNotes = structuredClone(state.baseNotes);
+  for (const [number, authorUid] of [[5, TUTORIAL_UID], [6, "tutorial-guest"], [7, TUTORIAL_UID]]) {
+    state.turns.push({ number, authorUid, notes: structuredClone(finalNotes) });
+  }
+  state.reflections.host.push(
+    { turnNumber: 5, interpretation: "高い音が返ってきた", intention: "響きをまとめた", guess: "お題B" },
+    { turnNumber: 7, interpretation: "応答の方向が分かった", intention: "", guess: "お題B" },
+  );
+  state.reflections.guest.push({ turnNumber: 6, interpretation: "まとまりを感じた", intention: "最後の応答を加えた", guess: "お題A" });
+  state.session = { ...state.session, status: "completed", turnNumber: MAX_TURNS, currentPlayerUid: null };
+  state.opponentPrivate = { prompt: "お題B" }; state.revealed = true;
+  $("tutorial-history-note").hidden = true; $("history-dialog").close(); updateSessionUi(); renderHistory(); renderResults();
+  $("result-dialog").showModal();
 }
 function showToast(message, error = false) {
   const toast = $("toast");
@@ -238,22 +302,33 @@ function noteDescription(note) {
   const harmonic = classifyNoteRole(HARMONY[note.bar].root, note.pitch, HARMONY[note.bar].context);
   return `${note.pitch}｜${harmonic.degree}｜${ownerLabel(note.owner)}`;
 }
-function isMyTurn() { return state.session?.status === "active" && state.session.currentPlayerUid === state.uid; }
-function canEditNotes() { return state.turnsLoaded && isMyTurn() && state.session.turnNumber < state.session.maxTurns; }
+function isMyTurn() {
+  const uid = state.tutorialMode ? TUTORIAL_UID : state.uid;
+  return state.session?.status === "active" && state.session.currentPlayerUid === uid;
+}
+function canEditNotes() {
+  if (state.tutorialMode) return tutorialState.stage === "edit";
+  return state.turnsLoaded && isMyTurn() && state.session.turnNumber < state.session.maxTurns;
+}
 function toggleNote(candidate) {
   if (!canEditNotes()) return;
   if (state.playing) stopPlayback();
-  const existingNote = state.draftNotes.some((note) => note.bar === candidate.bar && note.pitch === candidate.pitch);
+  const existing = state.draftNotes.find((note) => note.bar === candidate.bar && note.pitch === candidate.pitch);
+  const existingNote = Boolean(existing);
   if (existingNote) {
     state.draftNotes = removeNote(state.draftNotes, candidate).notes;
+    if (state.tutorialMode && existing.owner === "system") tutorialState = markBaseNoteRemoved(tutorialState);
+    if (state.tutorialMode && existing.owner !== "system" && existing.owner !== state.role) tutorialState = markOpponentNoteRemoved(tutorialState);
   } else {
     const placed = placeNote(state.draftNotes, { ...candidate, durationBeats: 4, owner: state.role });
     if (placed.outcome === "chord-full") { showToast("1つの和音には8音まで置けます．", true); return; }
     if (placed.outcome === "duplicate") { return; }
     state.draftNotes = placed.notes;
+    if (state.tutorialMode) tutorialState = markNoteAdded(tutorialState);
     playSingle(candidate.pitch, state.role);
   }
-  renderGrid();
+  renderGrid(); renderTutorialGuide();
+  if (state.tutorialMode && tutorialState.stage === "playback") $("preview-btn").focus();
 }
 function playSingle(pitch, voice) {
   audio.play([{ voice, frequency: noteToFrequency(pitch), startSeconds: 0, durationSeconds: .45 }]);
@@ -275,15 +350,33 @@ function setPlaybackButton(button, playing) {
 async function togglePlayback(notes, button = $("preview-btn")) {
   if (state.playing) {
     const switchingSource = state.playbackButton !== button;
+    if (!switchingSource && state.tutorialMode && button.id === "preview-btn" && tutorialState.stage === "playback") {
+      tutorialState = markPlaybackCompleted(tutorialState);
+    }
     stopPlayback();
+    updateForm(); renderTutorialGuide();
+    if (state.tutorialMode && tutorialState.stage === "record") $("interpretation-input").focus();
     if (!switchingSource) return;
   }
   state.playing = true; state.playbackButton = button; setPlaybackButton(button, true);
   try {
     await audio.play(playbackEvents(notes), {
       onPlayhead: ({ progress }) => { $("playhead").style.width = `${progress * 100}%`; },
-      onEnded: stopPlayback,
+      onEnded: () => {
+        if (state.tutorialMode && button.id === "preview-btn" && tutorialState.stage === "playback") {
+          tutorialState = markPlaybackCompleted(tutorialState); updateForm(); renderTutorialGuide();
+          $("interpretation-input").focus();
+        }
+        stopPlayback();
+      },
     });
+    if (state.tutorialMode && button.id === "preview-btn" && tutorialState.stage === "playback") {
+      tutorialState = markPlaybackStarted(tutorialState); renderTutorialGuide();
+    }
+    if (state.tutorialMode && button.classList.contains("history-play-button") && tutorialState.stage === "history") {
+      tutorialState = markHistoryPlaybackPracticed(tutorialState);
+      $("tutorial-show-result-btn").disabled = false;
+    }
   } catch (error) { stopPlayback(); showToast(friendlyError(error), true); }
 }
 function stopPlayback() {
@@ -300,8 +393,14 @@ function updateForm() {
   const intention = $("intention-input").value.trim();
   const guess = $("guess-select").value;
   const valid = turn === 1 ? Boolean(intention) : turn === MAX_TURNS ? Boolean(interpretation && guess) : Boolean(interpretation && intention && guess);
-  $("commit-btn").disabled = !(state.turnsLoaded && isMyTurn() && valid);
+  if (state.tutorialMode && ["record", "commit"].includes(tutorialState.stage)) {
+    tutorialState = markRecordCompleted(tutorialState, { interpretation, intention, guess });
+  }
+  $("commit-btn").disabled = state.tutorialMode
+    ? tutorialState.stage !== "commit"
+    : !(state.turnsLoaded && isMyTurn() && valid);
   $("requirement-text").textContent = !state.turnsLoaded ? "盤面を読み込んでいます．" : !isMyTurn() ? "あなたの手番になると記録を送れます．" : valid ? "送信できます．確定後は編集できません．" : turn === 1 ? "今回の意図を入力してください．" : turn === MAX_TURNS ? "最終ターンでは音を編集せず，解釈と相手のお題の予想を入力してください．" : "解釈，意図，相手のお題の予想を入力してください．";
+  if (state.tutorialMode) renderTutorialGuide();
 }
 function updateSessionUi() {
   if (!state.session) return;
@@ -331,6 +430,18 @@ function clearInputs() {
 }
 async function commitTurn() {
   if (!state.turnsLoaded || !isMyTurn()) return;
+  if (state.tutorialMode) {
+    const reflection = { turnNumber: 3, interpretation: $("interpretation-input").value.trim(), intention: $("intention-input").value.trim(), guess: $("guess-select").value };
+    tutorialState = commitTutorialTurn(tutorialState, reflection);
+    if (tutorialState.stage !== "committed") { updateForm(); return; }
+    state.turns.push({ number: 3, authorUid: TUTORIAL_UID, notes: structuredClone(state.draftNotes) });
+    state.reflections.host.push(reflection); state.baseNotes = structuredClone(state.draftNotes);
+    tutorialState = beginOpponentWait(tutorialState);
+    state.session = { ...state.session, turnNumber: 4, currentPlayerUid: "tutorial-guest" };
+    clearInputs(); updateSessionUi(); renderHistory(); renderTutorialGuide();
+    $("tutorial-guide-action").focus();
+    return;
+  }
   $("commit-btn").disabled = true;
   try {
     await gateway.commitTurn({ sessionId: state.sessionId, notes: state.draftNotes, reflection: { interpretation: $("interpretation-input").value.trim(), intention: $("intention-input").value.trim(), guess: $("guess-select").value } });
@@ -518,9 +629,12 @@ function returnToLobby() {
   state.turns = []; state.reflections = { host: [], guest: [] };
   state.baseNotes = structuredClone(SYSTEM_NOTES); state.draftNotes = structuredClone(SYSTEM_NOTES);
   state.turnsLoaded = false; state.revealed = false;
+  state.tutorialMode = false; tutorialState = createTutorialState();
+  document.body.classList.remove("tutorial-active");
   clearInputs();
   $("theme-card").setAttribute("aria-expanded", "false"); $("theme-text").textContent = "クリックして表示";
-  $("session-id-label").textContent = "------"; $("session-id-input").value = "";
+  $("session-id-label").textContent = "------"; $("session-id-input").value = ""; $("copy-session-btn").disabled = false;
+  $("tutorial-guide").hidden = true; $("tutorial-history-note").hidden = true; removeTutorialFocus(); populateGuessOptions();
   $("history-list").replaceChildren(); $("result-comparison").replaceChildren();
   $("game-view").hidden = true; $("lobby-view").hidden = false;
   $("auth-status").textContent = state.uid ? "接続済み" : "匿名接続を準備中";
@@ -529,35 +643,50 @@ function returnToLobby() {
 }
 
 function bindUi() {
-  for (const prompt of PROMPTS) { const option = document.createElement("option"); option.value = prompt; option.textContent = prompt; $("guess-select").append(option); }
+  populateGuessOptions();
   $("session-id-input").addEventListener("input", (event) => { event.target.value = event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, "").slice(0, 6); });
   $("create-session-btn").addEventListener("click", createSession); $("join-session-btn").addEventListener("click", joinSession); $("commit-btn").addEventListener("click", commitTurn);
   $("result-play-btn").dataset.playLabel = "最後の音を聴く";
   $("preview-btn").addEventListener("click", () => togglePlayback()); $("result-play-btn").addEventListener("click", () => togglePlayback(state.baseNotes, $("result-play-btn")));
-  $("theme-card").addEventListener("click", () => { const open = $("theme-card").getAttribute("aria-expanded") !== "true"; $("theme-card").setAttribute("aria-expanded", String(open)); $("theme-text").textContent = open ? state.privateData?.prompt || "読み込み中…" : "クリックして表示"; });
-  $("copy-session-btn").addEventListener("click", async () => { await navigator.clipboard.writeText(state.sessionId); showToast("セッションIDをコピーしました．"); });
+  $("theme-card").addEventListener("click", () => {
+    const open = $("theme-card").getAttribute("aria-expanded") !== "true";
+    $("theme-card").setAttribute("aria-expanded", String(open)); $("theme-text").textContent = open ? state.privateData?.prompt || "読み込み中…" : "クリックして表示";
+    if (state.tutorialMode && tutorialState.stage === "prompt" && open) { tutorialState = revealTutorialPrompt(tutorialState); renderGrid(); renderTutorialGuide(); }
+  });
+  $("copy-session-btn").addEventListener("click", async () => { if (state.tutorialMode) return; await navigator.clipboard.writeText(state.sessionId); showToast("セッションIDをコピーしました．"); });
   for (const [inputId, countId] of [["interpretation-input","interpretation-count"],["intention-input","intention-count"]]) $(inputId).addEventListener("input", () => { $(countId).textContent = $(inputId).value.length; updateForm(); });
   $("guess-select").addEventListener("change", updateForm);
-  $("history-btn").addEventListener("click", () => { state.historyOpenedFromResult = false; renderHistory(); $("history-dialog").showModal(); });
+  $("history-btn").addEventListener("click", () => {
+    if (state.tutorialMode && !["response", "history"].includes(tutorialState.stage)) return;
+    if (state.tutorialMode && tutorialState.stage === "response") tutorialState = openTutorialHistory(tutorialState);
+    state.historyOpenedFromResult = false; renderHistory(); $("tutorial-history-note").hidden = !state.tutorialMode;
+    if (state.tutorialMode) $("tutorial-show-result-btn").disabled = !tutorialState.historyPlaybackPracticed;
+    renderTutorialGuide(); $("history-dialog").showModal();
+  });
   $("close-history-btn").addEventListener("click", () => { stopPlayback(); $("history-dialog").close(); });
   $("history-dialog").addEventListener("close", () => {
     stopPlayback();
     if (state.historyOpenedFromResult && state.session?.status === "completed") {
       state.historyOpenedFromResult = false; renderResults(); $("result-dialog").showModal();
-    }
+    } else if (state.tutorialMode) renderTutorialGuide();
   });
-  $("result-history-btn").addEventListener("click", () => { state.historyOpenedFromResult = true; $("result-dialog").close(); renderHistory(); $("history-dialog").showModal(); });
-  $("result-home-btn").addEventListener("click", returnToLobby);
+  $("result-history-btn").addEventListener("click", () => { stopPlayback(); state.historyOpenedFromResult = true; $("tutorial-history-note").hidden = true; $("result-dialog").close(); renderHistory(); $("history-dialog").showModal(); });
+  $("result-home-btn").addEventListener("click", () => {
+    const returningFromTutorial = state.tutorialMode;
+    if (state.tutorialMode) tutorialState = completeTutorial(tutorialState);
+    returnToLobby();
+    if (returningFromTutorial) $("open-tutorial-btn").focus();
+  });
   $("result-dialog").addEventListener("cancel", (event) => event.preventDefault());
   $("open-tutorial-btn").addEventListener("click", openTutorial);
   $("skip-tutorial-btn").addEventListener("click", closeTutorial);
-  $("finish-tutorial-btn").addEventListener("click", finishTutorial);
-  $("tutorial-restart-btn").addEventListener("click", openTutorial);
-  $("tutorial-next-1").addEventListener("click", () => { tutorialState = moveToNextStep(tutorialState); renderTutorial(); });
-  $("tutorial-next-2").addEventListener("click", () => { tutorialState = moveToNextStep(tutorialState); renderTutorial(); });
-  $("tutorial-play-btn").addEventListener("click", () => playTutorialNotes().catch((error) => showToast(friendlyError(error), true)));
-  $("tutorial-result-btn").addEventListener("click", () => { tutorialState = reviewTutorialResult(tutorialState, { guess: "お題B", actualPrompt: "お題B" }); renderTutorial(); });
-  $("tutorial-dialog").addEventListener("close", () => { audio.stop(); tutorialState = createTutorialState(); tutorialNotes.clear(); });
+  $("tutorial-guide-action").addEventListener("click", () => {
+    if (tutorialState.stage === "overview") {
+      tutorialState = acknowledgeTutorialOverview(tutorialState); renderTutorialGuide(); $("theme-card").focus();
+    } else if (tutorialState.stage === "waiting") tutorialOpponentResponse();
+    else if (tutorialState.stage === "history") $("history-btn").click();
+  });
+  $("tutorial-show-result-btn").addEventListener("click", showTutorialResult);
 }
 
 bindUi(); renderGrid();
