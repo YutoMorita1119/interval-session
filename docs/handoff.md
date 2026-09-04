@@ -1,5 +1,43 @@
 # 引継ぎ
 
+## 2026-09-04｜参加待ちセッションのキャンセル
+
+### 要約
+
+ホストが2人目の参加前に確認画面からセッションをキャンセルし，開始画面へ戻れるようにした．待機中の作成者本人に限り，公開セッションと2人分のお題文書を一つのtransactionで削除し，参加が先に成立した場合は削除を拒否する．
+
+### 次の具体的なアクション
+
+1. 承認後にGitHubへpushし，Firebase HostingとFirestore Rulesを同時にdeployする．
+2. 本番で作成，確認画面の中止，キャンセル成功，同一IDへの参加失敗，参加との競合を2タブで確認する．
+
+### 作成・編集したファイル
+
+- `docs/implementation-plan-waiting-session-cancel.md`
+- `README.md`
+- `index.html`
+- `style.css`
+- `script.js`
+- `src/cancel-session-transaction.js`
+- `src/firebase-gateway.js`
+- `src/firestore-contract.js`
+- `firestore.rules`
+- `tests/firestore-contract.test.js`
+- `tests/cancel-session-transaction.test.js`
+
+### 主要な判断と理由
+
+- 完了セッションを保持する従来方針は変更せず，参加前でturn・reflectionが存在しない未使用セッションだけを削除対象にした．
+- sessionと`private/host`，`private/guest`を同じtransactionで削除し，お題文書だけが残る状態を防いだ．
+- 参加とキャンセルが競合した場合はtransactionの再評価で最新状態を検証し，両方が成功しないようにした．
+- 自動テスト45件，JavaScript構文検査，差分検査，ローカル開始画面とチュートリアルのブラウザ確認を通過した．Firestore Emulatorは端末にJavaがないため起動できず，Rulesの実環境確認はdeploy後の本番QAで行う．
+- commitはローカルで行い，pushとdeployは未実施．
+
+### アウトプット
+
+- AIRFLOW：https://airflow-ivory.vercel.app/
+- 対象アプリ：https://musical-comms-app.web.app/
+
 ## 2026-09-04｜開始画面文言と音量統一
 
 ### 要約

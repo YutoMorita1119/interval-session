@@ -1,7 +1,7 @@
 import { buildPlaybackSchedule } from "./src/audio-schedule.js";
 import { createAudioEngine } from "./src/audio-engine.js";
 import { firebaseConfig } from "./src/firebase-config.js";
-import { createFirebaseGateway } from "./src/firebase-gateway.js?v=4";
+import { createFirebaseGateway } from "./src/firebase-gateway.js?v=5";
 import { getBidirectionalFinalGuessResults, hasCurrentBoardSnapshot, MAX_TURNS } from "./src/game-domain.js";
 import { classifyNoteRole, normalizeBoardNotes, noteToFrequency, placeNote, removeNote } from "./src/music-domain.js";
 import {
@@ -413,6 +413,12 @@ function updateSessionUi() {
   $("turn-lock").hidden = myTurn || completed;
   $("lock-title").textContent = waiting ? "もう一人の参加を待っています" : "相手の応答を待っています";
   $("lock-detail").textContent = waiting ? `セッションID「${state.sessionId}」をもう一つのタブで入力してください．` : "確定されると画面は自動で更新されます．";
+  const canCancel = canCancelCurrentSession();
+  $("cancel-session-btn").hidden = !canCancel;
+  if (!canCancel && $("cancel-session-dialog").open) {
+    $("cancel-session-dialog").close();
+    showToast("参加者が接続したため，キャンセルできません．", true);
+  }
   renderGrid(); updateForm();
   if (completed && !state.revealed) revealResults();
 }
@@ -422,6 +428,13 @@ function applyLatestTurn() {
   state.draftNotes = structuredClone(state.baseNotes);
   state.turnsLoaded = hasCurrentBoardSnapshot(state.session, state.turns.length);
   renderGrid(); renderHistory(); updateForm();
+}
+
+function canCancelCurrentSession() {
+  return !state.tutorialMode
+    && state.role === "host"
+    && state.session?.status === "waiting"
+    && state.session.guestUid === null;
 }
 
 function clearInputs() {
@@ -492,6 +505,44 @@ async function joinSession() {
   $("join-session-btn").disabled = true;
   try { enterSession(await gateway.joinSession({ sessionId: id })); showToast(`セッション ${id} に参加しました．`); }
   catch (error) { showToast(friendlyError(error), true); $("join-session-btn").disabled = false; }
+}
+
+function openCancelSessionDialog() {
+  if (!canCancelCurrentSession()) return;
+  $("cancel-session-dialog").showModal();
+  $("continue-waiting-btn").focus();
+}
+
+async function cancelWaitingSession() {
+  if (!canCancelCurrentSession()) {
+    if ($("cancel-session-dialog").open) $("cancel-session-dialog").close();
+    showToast("参加者が接続したため，キャンセルできません．", true);
+    return;
+  }
+
+  const button = $("confirm-cancel-session-btn");
+  const sessionId = state.sessionId;
+  button.disabled = true; button.textContent = "キャンセル中…";
+  try {
+    await gateway.cancelWaitingSession({ sessionId });
+    if ($("cancel-session-dialog").open) $("cancel-session-dialog").close();
+    returnToLobby();
+    showToast("セッションをキャンセルしました．");
+  } catch (error) {
+    const cancellationCode = error?.code;
+    if ($("cancel-session-dialog").open) $("cancel-session-dialog").close();
+    if (cancellationCode === "session-not-found") {
+      returnToLobby();
+      showToast("セッションはすでにキャンセルされています．");
+    } else if (["session-not-waiting", "participant-joined", "session-started"].includes(cancellationCode)) {
+      showToast("参加者が接続したため，キャンセルできません．", true);
+    } else {
+      showToast(friendlyError(error), true);
+    }
+    updateSessionUi();
+  } finally {
+    button.disabled = false; button.textContent = "キャンセルして戻る";
+  }
 }
 
 function textRow(label, text, secret = false) {
@@ -624,7 +675,7 @@ function returnToLobby() {
   stopPlayback();
   state.historyOpenedFromResult = false;
   stopSessionListeners(); forgetSession();
-  for (const dialog of [$("history-dialog"), $("result-dialog")]) if (dialog.open) dialog.close();
+  for (const dialog of [$("history-dialog"), $("result-dialog"), $("cancel-session-dialog")]) if (dialog.open) dialog.close();
   state.sessionId = null; state.role = null; state.session = null; state.privateData = null; state.opponentPrivate = null;
   state.turns = []; state.reflections = { host: [], guest: [] };
   state.baseNotes = structuredClone(SYSTEM_NOTES); state.draftNotes = structuredClone(SYSTEM_NOTES);
@@ -634,6 +685,7 @@ function returnToLobby() {
   clearInputs();
   $("theme-card").setAttribute("aria-expanded", "false"); $("theme-text").textContent = "クリックして表示";
   $("session-id-label").textContent = "------"; $("session-id-input").value = ""; $("copy-session-btn").disabled = false;
+  $("cancel-session-btn").hidden = true;
   $("tutorial-guide").hidden = true; $("tutorial-history-note").hidden = true; removeTutorialFocus(); populateGuessOptions();
   $("history-list").replaceChildren(); $("result-comparison").replaceChildren();
   $("game-view").hidden = true; $("lobby-view").hidden = false;
@@ -654,6 +706,9 @@ function bindUi() {
     if (state.tutorialMode && tutorialState.stage === "prompt" && open) { tutorialState = revealTutorialPrompt(tutorialState); renderGrid(); renderTutorialGuide(); }
   });
   $("copy-session-btn").addEventListener("click", async () => { if (state.tutorialMode) return; await navigator.clipboard.writeText(state.sessionId); showToast("セッションIDをコピーしました．"); });
+  $("cancel-session-btn").addEventListener("click", openCancelSessionDialog);
+  $("continue-waiting-btn").addEventListener("click", () => $("cancel-session-dialog").close());
+  $("confirm-cancel-session-btn").addEventListener("click", cancelWaitingSession);
   for (const [inputId, countId] of [["interpretation-input","interpretation-count"],["intention-input","intention-count"]]) $(inputId).addEventListener("input", () => { $(countId).textContent = $(inputId).value.length; updateForm(); });
   $("guess-select").addEventListener("change", updateForm);
   $("history-btn").addEventListener("click", () => {

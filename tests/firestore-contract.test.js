@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildCancelWaitingSessionWrites,
   buildCreateSessionWrites,
   buildJoinSessionWrites,
   buildTurnCommitWrites,
@@ -13,6 +14,48 @@ import {
   turnDocumentPath,
   visiblePrivateRoles,
 } from '../src/firestore-contract.js';
+
+function caughtError(action) {
+  try { action(); }
+  catch (error) { return error; }
+  assert.fail('expected action to throw');
+}
+
+test('参加待ちセッションは作成者本人だけが3文書をまとめて削除できる', () => {
+  const waitingSession = {
+    status: 'waiting',
+    hostUid: 'host-uid',
+    guestUid: null,
+    currentPlayerUid: 'host-uid',
+    turnNumber: 1,
+  };
+
+  assert.deepEqual(buildCancelWaitingSessionWrites({
+    sessionId: 'ABCD12',
+    session: waitingSession,
+    actorUid: 'host-uid',
+  }), [
+    { operation: 'delete', path: 'sessions/ABCD12/private/host' },
+    { operation: 'delete', path: 'sessions/ABCD12/private/guest' },
+    { operation: 'delete', path: 'sessions/ABCD12' },
+  ]);
+
+  assert.equal(caughtError(() => buildCancelWaitingSessionWrites({
+    sessionId: 'ABCD12', session: waitingSession, actorUid: 'other-uid',
+  })).code, 'session-not-creator');
+  assert.equal(caughtError(() => buildCancelWaitingSessionWrites({
+    sessionId: 'ABCD12', session: { ...waitingSession, status: 'active' }, actorUid: 'host-uid',
+  })).code, 'session-not-waiting');
+  assert.equal(caughtError(() => buildCancelWaitingSessionWrites({
+    sessionId: 'ABCD12', session: { ...waitingSession, status: 'completed' }, actorUid: 'host-uid',
+  })).code, 'session-not-waiting');
+  assert.equal(caughtError(() => buildCancelWaitingSessionWrites({
+    sessionId: 'ABCD12', session: { ...waitingSession, guestUid: 'guest-uid' }, actorUid: 'host-uid',
+  })).code, 'participant-joined');
+  assert.equal(caughtError(() => buildCancelWaitingSessionWrites({
+    sessionId: 'ABCD12', session: { ...waitingSession, turnNumber: 2 }, actorUid: 'host-uid',
+  })).code, 'session-started');
+});
 
 test('公開セッション，確定ターン，非公開データの保存先を分離する', () => {
   assert.equal(sessionDocumentPath('ABCD12'), 'sessions/ABCD12');

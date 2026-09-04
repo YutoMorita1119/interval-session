@@ -27,6 +27,7 @@ import {
   participantRole,
   sessionDocumentPath,
 } from './firestore-contract.js';
+import { executeCancelWaitingSessionTransaction } from './cancel-session-transaction.js';
 
 function applyWrites(transaction, database, writes) {
   for (const write of writes) {
@@ -131,6 +132,19 @@ export function createFirebaseGateway(firebaseConfig) {
     return { sessionId, role, uid: user.uid };
   }
 
+  async function cancelWaitingSession({ sessionId }) {
+    const user = requireUser(auth);
+
+    return runTransaction(database, (transaction) => (
+      executeCancelWaitingSessionTransaction({
+        transaction,
+        sessionId,
+        actorUid: user.uid,
+        documentReference: (path) => doc(database, path),
+      })
+    ));
+  }
+
   function listenSession(sessionId, listener, onError) {
     requireUser(auth);
     return onSnapshot(
@@ -215,6 +229,7 @@ export function createFirebaseGateway(firebaseConfig) {
     createSession,
     joinSession,
     resumeSession,
+    cancelWaitingSession,
     listenSession,
     listenTurns,
     listenPrivateData,

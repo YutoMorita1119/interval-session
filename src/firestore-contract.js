@@ -6,6 +6,14 @@ function requireSegment(value, label) {
   return value;
 }
 
+export class SessionCancellationError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'SessionCancellationError';
+    this.code = code;
+  }
+}
+
 export function sessionDocumentPath(sessionId) {
   return `sessions/${requireSegment(sessionId, 'sessionId')}`;
 }
@@ -142,6 +150,32 @@ export function buildJoinSessionWrites({
         updatedAt,
       },
     },
+  ];
+}
+
+export function buildCancelWaitingSessionWrites({ sessionId, session, actorUid }) {
+  requireSegment(actorUid, 'actorUid');
+
+  if (session.hostUid !== actorUid) {
+    throw new SessionCancellationError('session-not-creator', 'actor must be the session creator');
+  }
+
+  if (session.status !== 'waiting') {
+    throw new SessionCancellationError('session-not-waiting', 'session must be waiting');
+  }
+
+  if (session.guestUid !== null) {
+    throw new SessionCancellationError('participant-joined', 'participant has already joined');
+  }
+
+  if (session.turnNumber !== 1 || session.currentPlayerUid !== actorUid) {
+    throw new SessionCancellationError('session-started', 'session must not have started');
+  }
+
+  return [
+    { operation: 'delete', path: privateDocumentPath(sessionId, 'host') },
+    { operation: 'delete', path: privateDocumentPath(sessionId, 'guest') },
+    { operation: 'delete', path: sessionDocumentPath(sessionId) },
   ];
 }
 

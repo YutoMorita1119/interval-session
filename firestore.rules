@@ -55,6 +55,18 @@ service cloud.firestore {
       return signedIn() && request.auth.uid in session.participantUids;
     }
 
+    function deletesWaitingSession(sessionId) {
+      return signedIn()
+        && sessionBefore(sessionId).status == 'waiting'
+        && sessionBefore(sessionId).hostUid == request.auth.uid
+        && sessionBefore(sessionId).guestUid == null
+        && sessionBefore(sessionId).turnNumber == 1
+        && sessionBefore(sessionId).currentPlayerUid == request.auth.uid
+        && !existsAfter(sessionPath(sessionId))
+        && !existsAfter(privatePath(sessionId, 'host'))
+        && !existsAfter(privatePath(sessionId, 'guest'));
+    }
+
     function isJoin(before, after) {
       return before.status == 'waiting'
         && before.guestUid == null
@@ -119,7 +131,7 @@ service cloud.firestore {
             && hasCommitDocuments(sessionId, resource.data)
             && (isNormalTurnCommit(resource.data, request.resource.data)
               || isFinalTurnCommit(resource.data, request.resource.data))));
-      allow delete: if false;
+      allow delete: if deletesWaitingSession(sessionId);
 
       match /turns/{turnId} {
         allow read: if isParticipant(sessionBefore(sessionId));
@@ -154,7 +166,8 @@ service cloud.firestore {
           && request.resource.data.prompt is string
           && request.resource.data.prompt.size() > 0
           && request.resource.data.prompt.size() <= 100;
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if deletesWaitingSession(sessionId);
 
         match /reflections/{turnId} {
           allow read: if isParticipant(sessionBefore(sessionId))

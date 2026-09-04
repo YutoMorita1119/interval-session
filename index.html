@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="音で意図を伝え合う，2人用のターン制音楽コミュニケーション実験です．">
   <title>Interval Session</title>
-  <link rel="stylesheet" href="style.css?v=11">
+  <link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
@@ -37,7 +37,7 @@
         <section class="composer-panel" aria-label="音楽編集">
           <div class="guide-strip"><p><strong>音を置く：</strong>4つの和音からマスをクリック　<strong>消す：</strong>基本和音を含む音をもう一度クリック</p><div class="legend"><span class="legend-system"><i></i>基本和音</span><span class="legend-mine"><i></i>あなた</span><span class="legend-other"><i></i>相手</span></div></div>
           <div id="piano-roll" class="piano-roll" aria-label="4和音のピアノロール"></div>
-          <div id="turn-lock" class="turn-lock" hidden><div><span class="waiting-pulse"></span><strong id="lock-title">相手の応答を待っています</strong><p id="lock-detail">画面は自動で更新されます．</p></div></div>
+          <div id="turn-lock" class="turn-lock" hidden><div><span class="waiting-pulse"></span><strong id="lock-title">相手の応答を待っています</strong><p id="lock-detail">画面は自動で更新されます．</p><button id="cancel-session-btn" class="button danger-outline" type="button" hidden>セッションをキャンセル</button></div></div>
           <div class="transport"><button id="preview-btn" class="button transport-button"><span id="preview-icon">▶</span><span><strong id="preview-label">全体を聴く</strong><small>4小節・約10秒</small></span></button><div class="progress-track"><span id="playhead"></span></div><span class="tempo">♩ = 100</span></div>
         </section>
         <aside class="reflection-panel">
@@ -52,6 +52,11 @@
     </section>
   </main>
     <dialog id="history-dialog" class="modal"><div class="modal-header"><h2>ターン履歴</h2><button id="close-history-btn" class="icon-button" aria-label="履歴を閉じる">×</button></div><div id="tutorial-history-note" class="tutorial-history-note" hidden><strong>履歴</strong><p>各ターンの盤面，音名と度数，記録を確認できます．いずれかの「このターンを聴く」で保存時の音を再生してください．</p><button id="tutorial-show-result-btn" class="button primary" type="button" disabled>結果を見る</button></div><div id="history-list" class="history-list"></div></dialog>
+    <dialog id="cancel-session-dialog" class="modal confirmation-modal">
+      <h2>セッションをキャンセルしますか？</h2>
+      <p>参加待ちのセッションとお題データを削除して，最初の画面へ戻ります．このセッションIDは使用できなくなります．</p>
+      <div class="confirmation-actions"><button id="continue-waiting-btn" class="button secondary" type="button">待機を続ける</button><button id="confirm-cancel-session-btn" class="button danger" type="button">キャンセルして戻る</button></div>
+    </dialog>
     <aside id="tutorial-guide" class="tutorial-guide" role="dialog" aria-labelledby="tutorial-guide-title" aria-live="polite" hidden>
       <div class="tutorial-guide-top"><span id="tutorial-chapter">全体</span><button id="skip-tutorial-btn" class="text-button" type="button">終了</button></div>
       <h2 id="tutorial-guide-title">チュートリアル</h2>
@@ -60,6 +65,6 @@
       <button id="tutorial-guide-action" class="button primary" type="button">次へ</button>
     </aside>
     <dialog id="result-dialog" class="modal result-modal"><h2>セッション結果</h2><p>双方のお題と最終予想を確認できます．</p><div id="result-comparison" class="result-comparison loading" aria-live="polite">最終予想の判定を読み込んでいます．</div><div class="result-actions"><button id="result-play-btn" class="button secondary">最後の音を聴く</button><button id="result-history-btn" class="button secondary">記録を見る</button><button id="result-home-btn" class="button primary">最初の画面へ戻る</button></div></dialog>
-  <script type="module" src="script.js?v=11"></script>
+  <script type="module" src="script.js?v=12"></script>
 </body>
 </html>
